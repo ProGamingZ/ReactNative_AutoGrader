@@ -1,6 +1,7 @@
 import threading
 import time
 from src.engine.folder_matcher import StudentFolderMatcher
+from src.engine.ast_parser import ReactNativeParser
 import customtkinter as ctk
 from customtkinter import filedialog
 import pandas as pd
@@ -135,16 +136,25 @@ class AutoGraderWindow(ctk.CTk):
             matched_folder = matcher.find_match(student_name)
             
             if matched_folder:
-                print(f"[FOUND] {student_name} -> {matched_folder}")
-                # TODO: Pass this folder to the code parser & AI later
+                # Get the absolute path to the matched student's folder
+                student_folder_path = os.path.join(self.submissions_path, matched_folder)
+                
+                # Extract and parse the code
+                parser = ReactNativeParser(student_folder_path)
+                
+                print(f"[FOUND] {student_name} -> {matched_folder} ({parser.file_count} files)")
+                
+                if parser.file_count > 0:
+                    # Run the objective syntax check
+                    objective_results = parser.check_objective_rubric()
+                    print(f"   Objective Check: {objective_results}")
+                    
+                    # TODO: Pass parser.raw_code to the AI Grader here
+                else:
+                    print("   [WARNING] Folder matched, but no .js/.tsx files were found inside.")
+                    
             else:
                 print(f"[MISSING] {student_name} -> No folder found")
-
-            # Simulate processing time so you can see the progress bar move
-            time.sleep(0.1) 
-            
-            # Update the progress bar (value must be between 0.0 and 1.0)
-            self.progress.set(count / total_students)
             
         # Re-enable the UI when finished
         self.status_label.configure(text="Batch scanning complete! Check the terminal output.")
