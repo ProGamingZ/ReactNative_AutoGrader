@@ -1,3 +1,6 @@
+import threading
+import time
+from src.engine.folder_matcher import StudentFolderMatcher
 import customtkinter as ctk
 from customtkinter import filedialog
 import pandas as pd
@@ -41,7 +44,7 @@ class AutoGraderWindow(ctk.CTk):
 
         # --- Controls Frame ---
         # Start Button
-        self.btn_start = ctk.CTkButton(self, text="Start Grading Batch", height=40, fg_color="green", hover_color="darkgreen", state="disabled")
+        self.btn_start = ctk.CTkButton(self, text="Start Grading Batch", height=40, fg_color="green", hover_color="darkgreen", state="disabled", command=self.start_grading)
         self.btn_start.grid(row=2, column=0, pady=20)
 
         # Progress Bar Placeholder
@@ -97,3 +100,55 @@ class AutoGraderWindow(ctk.CTk):
         if self.students_df is not None and self.submissions_path is not None:
             self.btn_start.configure(state="normal")
             self.status_label.configure(text="Ready to begin grading.")
+
+    def start_grading(self):
+        # Disable UI elements so the user doesn't click them while grading
+        self.btn_start.configure(state="disabled")
+        self.btn_excel.configure(state="disabled")
+        self.btn_folder.configure(state="disabled")
+        self.status_label.configure(text="Initializing grading engine...")
+        
+        # Reset progress bar
+        self.progress.set(0)
+
+        # Launch the grading process in a background thread to prevent UI freezing
+        thread = threading.Thread(target=self._run_grading_batch)
+        thread.daemon = True # Closes the thread if the main app is closed
+        thread.start()
+
+    def _run_grading_batch(self):
+        # Guard clause: Proves to Pylance that these are not None
+        if self.students_df is None or self.submissions_path is None:
+            return
+
+        matcher = StudentFolderMatcher(self.submissions_path)
+        total_students = len(self.students_df)
+        
+        # Use enumerate to get a strict integer count starting at 1
+        for count, (index, row) in enumerate(self.students_df.iterrows(), start=1):
+            student_name = str(row['NAME'])
+            
+            # Safely update UI from the thread
+            self.status_label.configure(text=f"Scanning ({count}/{total_students}): {student_name}")
+            
+            # Attempt to find their submission folder
+            matched_folder = matcher.find_match(student_name)
+            
+            if matched_folder:
+                print(f"[FOUND] {student_name} -> {matched_folder}")
+                # TODO: Pass this folder to the code parser & AI later
+            else:
+                print(f"[MISSING] {student_name} -> No folder found")
+
+            # Simulate processing time so you can see the progress bar move
+            time.sleep(0.1) 
+            
+            # Update the progress bar (value must be between 0.0 and 1.0)
+            self.progress.set(count / total_students)
+            
+        # Re-enable the UI when finished
+        self.status_label.configure(text="Batch scanning complete! Check the terminal output.")
+        self.btn_start.configure(state="normal")
+        self.btn_excel.configure(state="normal")
+        self.btn_folder.configure(state="normal")
+    
