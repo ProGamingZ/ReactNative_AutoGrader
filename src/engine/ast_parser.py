@@ -35,14 +35,23 @@ class ReactNativeParser:
             self.raw_code = self.raw_code[:12000] + "\n\n// [NOTE: Source code truncated for length]"
 
     def check_objective_rubric(self):
-        """Scans code for mandatory syntax flags."""
+        """Scans code for mandatory syntax flags across all Activities."""
         code = self.raw_code
         return {
+            # Activity 2 Core
+            "has_core_ui": bool(re.search(r'<\s*(View|Text|Image|ScrollView)\b', code)),
+            "has_stylesheet": bool(re.search(r'\bStyleSheet\.create\b', code)),
+            
+            # Activity 3 Core
             "has_usestate": bool(re.search(r'\buseState\b', code)),
             "has_flatlist": bool(re.search(r'<\s*FlatList\b', code)),
             "has_textinput": bool(re.search(r'<\s*TextInput\b', code)),
-            "has_touchable": bool(re.search(r'<\s*(TouchableOpacity|Pressable|TouchableHighlight)\b', code)),
-            "has_stylesheet": bool(re.search(r'\bStyleSheet\.create\b', code)),
-            "has_navigation": bool(re.search(r'\bnavigate\s*\(', code)) or bool(re.search(r'\bNavigationContainer\b', code)),
-            "has_goback": bool(re.search(r'\bgoBack\s*\(', code))
+            "has_touchable": bool(re.search(r'<\s*(TouchableOpacity|Pressable|TouchableHighlight|Button)\b', code)),
+            
+            # Activity 4 Core
+            "has_nav_container": bool(re.search(r'\bNavigationContainer\b', code)),
+            "has_stack_nav": bool(re.search(r'\bcreateNativeStackNavigator\b', code)),
+            "has_navigate": bool(re.search(r'\bnavigate\s*\(', code)),
+            "has_goback": bool(re.search(r'\bgoBack\s*\(', code)),
+            "has_route_params": bool(re.search(r'\broute\.params\b', code))
         }
