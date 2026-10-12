@@ -9,34 +9,34 @@ class ReactNativeParser:
         self._load_files()
 
     def _load_files(self):
-        """Recursively reads all React Native code files in the student's folder."""
+        """Recursively reads React Native code files, excluding build/config clutter."""
+        # Folders to completely ignore
+        ignored_dirs = {'node_modules', '.expo', 'android', 'ios', 'build', 'dist', '.git'}
+        # Config files that add prompt weight without grading value
+        ignored_files = {'metro.config.js', 'babel.config.js', 'eslintrc.js', 'app.json', 'package.json', 'package-lock.json'}
+
         for root, dirs, files in os.walk(self.folder_path):
-            # Ignore heavy/unnecessary folders if students accidentally uploaded them
-            if 'node_modules' in dirs:
-                dirs.remove('node_modules')
-            if '.expo' in dirs:
-                dirs.remove('.expo')
+            # Prune ignored directories in-place
+            dirs[:] = [d for d in dirs if d not in ignored_dirs]
                 
             for file in files:
-                if file.endswith(('.js', '.jsx', '.ts', '.tsx')):
+                if file.endswith(('.js', '.jsx', '.ts', '.tsx')) and file not in ignored_files:
                     file_path = os.path.join(root, file)
                     try:
                         with open(file_path, 'r', encoding='utf-8') as f:
                             content = f.read()
-                            # Append the filename as a header so the AI knows which file is which later
                             self.raw_code += f"\n\n// --- File: {file} ---\n" + content
                             self.file_count += 1
                     except Exception as e:
                         print(f"Could not read {file}: {e}")
 
+        # CAP PROMPT SIZE: Limit raw_code to 12,000 chars (~3,000 tokens) to ensure fast CPU inference
+        if len(self.raw_code) > 12000:
+            self.raw_code = self.raw_code[:12000] + "\n\n// [NOTE: Source code truncated for length]"
+
     def check_objective_rubric(self):
-        """
-        Scans the extracted code for mandatory React Native syntax.
-        Returns a dictionary of boolean flags.
-        """
+        """Scans code for mandatory syntax flags."""
         code = self.raw_code
-        
-        # We use regex \b (word boundaries) and <\s* (optional spaces) to catch different coding styles
         return {
             "has_usestate": bool(re.search(r'\buseState\b', code)),
             "has_flatlist": bool(re.search(r'<\s*FlatList\b', code)),
