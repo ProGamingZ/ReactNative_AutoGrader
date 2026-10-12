@@ -1,6 +1,7 @@
 import json
 import ollama
-
+import logging
+logger = logging.getLogger("AutoGrader")
 class AIGrader:
     def __init__(self, model_name="phi3"):
         self.model_name = model_name
@@ -37,24 +38,22 @@ JSON Format:
 }}"""
 
         try:
+            logger.debug(f"Sending prompt to Ollama model: {self.model_name}...")
             response = ollama.chat(
                 model=self.model_name,
                 messages=[
                     {'role': 'system', 'content': system_prompt},
                     {'role': 'user', 'content': f"Student Source Code:\n\n{code_text}"}
                 ],
-                options={
-                    "temperature": 0.1,
-                    "num_predict": 300,
-                    "num_thread": 4
-                }
+                options={"temperature": 0.1, "num_predict": 300, "num_thread": 4} 
             )
             
             cleaned = self.clean_json(response['message']['content'])
+            logger.debug(f"Raw AI Output: {cleaned}")
             return json.loads(cleaned)
             
         except Exception as e:
-            print(f"[AI ERROR] {e}")
+            logger.error(f"AI API Connection Failed: {e}")
             return {
                 "scores": {},
                 "feedback": "Error processing AI grading. Requires manual review."

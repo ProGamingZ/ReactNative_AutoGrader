@@ -1,6 +1,7 @@
 import os
 import re
-
+import logging
+logger = logging.getLogger("AutoGrader")
 class ReactNativeParser:
     def __init__(self, folder_path):
         self.folder_path = folder_path
@@ -37,7 +38,7 @@ class ReactNativeParser:
     def check_objective_rubric(self):
         """Scans code for mandatory syntax flags, embracing modern community alternatives."""
         code = self.raw_code
-        return {
+        flags = {
             # Activity 2: Styling (Accepts StyleSheet, styled-components, NativeWind/Tailwind, Tamagui)
             "has_core_ui": bool(re.search(r'<\s*(View|Text|Image|ScrollView)\b', code)),
             "has_stylesheet": bool(re.search(r'\b(StyleSheet\.create|styled|tw`|className=)\b', code)),
@@ -61,3 +62,7 @@ class ReactNativeParser:
             # Storage: AsyncStorage, MMKV, SQLite, or WatermelonDB
             "has_local_storage": bool(re.search(r'\b(AsyncStorage|MMKV|SQLite|Watermelon)\b', code))
         }
+        
+        logger.debug(f"Parser extracted {self.file_count} files. Total chars: {len(self.raw_code)}")
+        logger.debug(f"Parser Flags: {flags}")
+        return flags

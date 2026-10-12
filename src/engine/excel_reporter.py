@@ -4,6 +4,8 @@ from datetime import datetime
 from openpyxl.utils import get_column_letter
 from openpyxl.styles import Alignment
 from src.models.grade_result import GradeResult
+import logging
+logger = logging.getLogger("AutoGrader")
 
 class ExcelReporter:
     def __init__(self, original_df, original_filepath):
