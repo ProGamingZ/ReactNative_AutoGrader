@@ -35,23 +35,29 @@ class ReactNativeParser:
             self.raw_code = self.raw_code[:12000] + "\n\n// [NOTE: Source code truncated for length]"
 
     def check_objective_rubric(self):
-        """Scans code for mandatory syntax flags across all Activities."""
+        """Scans code for mandatory syntax flags, embracing modern community alternatives."""
         code = self.raw_code
         return {
-            # Activity 2 Core
+            # Activity 2: Styling (Accepts StyleSheet, styled-components, NativeWind/Tailwind, Tamagui)
             "has_core_ui": bool(re.search(r'<\s*(View|Text|Image|ScrollView)\b', code)),
-            "has_stylesheet": bool(re.search(r'\bStyleSheet\.create\b', code)),
+            "has_stylesheet": bool(re.search(r'\b(StyleSheet\.create|styled|tw`|className=)\b', code)),
             
-            # Activity 3 Core
-            "has_usestate": bool(re.search(r'\buseState\b', code)),
-            "has_flatlist": bool(re.search(r'<\s*FlatList\b', code)),
+            # Activity 3: Lists & State (Accepts useState, useReducer, Zustand, Valtio, MobX)
+            "has_usestate": bool(re.search(r'\b(useState|useReducer|create\(|proxy\()\b', code)),
+            # Accepts FlatList, FlashList (Shopify), SectionList, or RecyclerListView
+            "has_flatlist": bool(re.search(r'<\s*(FlatList|FlashList|SectionList|RecyclerListView)\b', code)),
             "has_textinput": bool(re.search(r'<\s*TextInput\b', code)),
             "has_touchable": bool(re.search(r'<\s*(TouchableOpacity|Pressable|TouchableHighlight|Button)\b', code)),
             
-            # Activity 4 Core
-            "has_nav_container": bool(re.search(r'\bNavigationContainer\b', code)),
-            "has_stack_nav": bool(re.search(r'\bcreateNativeStackNavigator\b', code)),
-            "has_navigate": bool(re.search(r'\bnavigate\s*\(', code)),
-            "has_goback": bool(re.search(r'\bgoBack\s*\(', code)),
-            "has_route_params": bool(re.search(r'\broute\.params\b', code))
+            # Activity 4: Navigation (Accepts React Navigation OR Expo Router)
+            "has_nav_container": bool(re.search(r'\b(NavigationContainer|ExpoRoot|Stack)\b', code)),
+            "has_navigate": bool(re.search(r'\b(navigate|push|replace)\s*\(', code)) or bool(re.search(r'<\s*Link\b', code)),
+            "has_goback": bool(re.search(r'\b(goBack|back)\s*\(', code)),
+            "has_route_params": bool(re.search(r'\b(route\.params|useLocalSearchParams|useGlobalSearchParams)\b', code)),
+
+            # FUTURE PROOFING (Lessons 6, 7, 8)
+            # Fetching: Native fetch, Axios, or React Query / SWR
+            "has_data_fetch": bool(re.search(r'\b(fetch|axios|useQuery|useSWR)\b', code)),
+            # Storage: AsyncStorage, MMKV, SQLite, or WatermelonDB
+            "has_local_storage": bool(re.search(r'\b(AsyncStorage|MMKV|SQLite|Watermelon)\b', code))
         }
