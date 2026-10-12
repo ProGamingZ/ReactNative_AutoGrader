@@ -1,3 +1,5 @@
+import logging
+from datetime import datetime
 import threading
 import time
 from src.engine.folder_matcher import StudentFolderMatcher
@@ -10,19 +12,36 @@ from customtkinter import filedialog
 import pandas as pd
 import os
 
+
+class TextBoxLogHandler(logging.Handler):
+    def __init__(self, text_widget):
+        super().__init__()
+        self.text_widget = text_widget
+
+    def emit(self, record):
+        msg = self.format(record)
+        # Tkinter is not thread-safe. We use .after(0) to safely push updates to the UI
+        def append():
+            self.text_widget.configure(state="normal")
+            self.text_widget.insert("end", msg + "\n")
+            self.text_widget.configure(state="disabled")
+            self.text_widget.yview("end")  # Auto-scroll to bottom
+        self.text_widget.after(0, append)
 class AutoGraderWindow(ctk.CTk):
     def __init__(self):
         super().__init__()
 
         self.title("React Native Auto-Grader")
-        self.geometry("750x650")
+        self.geometry("650x750")
+        self.minsize(650, 750)
+        self.maxsize(900, 900)
         self.grid_columnconfigure(0, weight=1)
 
         self.header = ctk.CTkLabel(self, text="React Native Auto-Grader", font=ctk.CTkFont(size=24, weight="bold"))
-        self.header.grid(row=0, column=0, pady=(20, 10))
+        self.header.grid(row=0, column=0, pady=(10, 5))
 
         self.frame = ctk.CTkFrame(self)
-        self.frame.grid(row=1, column=0, padx=20, pady=10, sticky="ew")
+        self.frame.grid(row=1, column=0, padx=20, pady=5, sticky="ew")
         self.frame.grid_columnconfigure(1, weight=1)
 
         # 1. Excel Selector
@@ -70,6 +89,21 @@ class AutoGraderWindow(ctk.CTk):
         
         self.status_label = ctk.CTkLabel(self, text="Ready. Please configure all settings.")
         self.status_label.grid(row=4, column=0)
+
+        # Diagnostic Terminal
+        self.terminal = ctk.CTkTextbox(self, height=200, state="disabled", fg_color="black", text_color="lightgreen", font=ctk.CTkFont(family="Consolas", size=11))
+        self.terminal.grid(row=5, column=0, padx=20, pady=10, sticky="nsew")
+        self.grid_rowconfigure(5, weight=1)
+
+        # Setup Base Logger
+        self.logger = logging.getLogger("AutoGrader")
+        self.logger.setLevel(logging.DEBUG) # Capture everything internally
+        
+        # Wire Logger to the UI Terminal (Only show INFO and above)
+        self.ui_handler = TextBoxLogHandler(self.terminal)
+        self.ui_handler.setLevel(logging.INFO)
+        self.ui_handler.setFormatter(logging.Formatter('[%(asctime)s] %(message)s', datefmt='%H:%M:%S'))
+        self.logger.addHandler(self.ui_handler)
 
         # Paths and Data
         self.students_df = None
@@ -124,12 +158,32 @@ class AutoGraderWindow(ctk.CTk):
             self.status_label.configure(text="Ready to begin grading.")
 
     def start_grading(self):
+        output_path = self.output_path
+        if output_path is None:
+            self.status_label.configure(text="Please select an output folder before starting.")
+            return
+
         self.btn_start.configure(state="disabled")
         self.progress.set(0)
+        self.terminal.configure(state="normal")
+        self.terminal.delete("1.0", "end") # Clear terminal on new run
+        self.terminal.configure(state="disabled")
+        
+        # Setup File Handler (Write everything to .log file)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        log_file = os.path.join(output_path, f"Diagnostic_Report_{timestamp}.log")
+        
+        file_handler = logging.FileHandler(log_file, encoding='utf-8')
+        file_handler.setLevel(logging.DEBUG)
+        file_handler.setFormatter(logging.Formatter('[%(asctime)s] [%(levelname)s] [%(module)s] %(message)s'))
+        self.logger.addHandler(file_handler)
+        
+        self.logger.info("--- STARTED NEW GRADING BATCH ---")
+        self.logger.debug(f"Target Output Directory: {self.output_path}")
+
         threading.Thread(target=self._run_grading_batch, daemon=True).start()
 
     def _run_grading_batch(self):
-        # GUARD CLAUSE: Proves to Pylance that these are populated before we use them
         if self.students_df is None or self.submissions_path is None or self.output_path is None:
             return
 
@@ -139,7 +193,9 @@ class AutoGraderWindow(ctk.CTk):
         
         for count, (index, row) in enumerate(self.students_df.iterrows(), start=1):
             student_name = str(row['NAME'])
-            self.status_label.configure(text=f"Scanning ({count}/{total}): {student_name}")
+            self.status_label.configure(text=f"Grading ({count}/{total}): {student_name}")
+            self.logger.info(f"Processing Student ({count}/{total}): {student_name}")
+            
             matched_folder = matcher.find_match(student_name)
             
             if matched_folder:
@@ -147,26 +203,24 @@ class AutoGraderWindow(ctk.CTk):
                 parser = ReactNativeParser(student_folder_path)
                 
                 if parser.file_count > 0:
-                    self.status_label.configure(text=f"AI Evaluating ({count}/{total}): {student_name}")
+                    self.logger.info(f"Files extracted. Running AI Evaluation...")
                     grader = AIGrader(model_name=self.model_var.get())
                     ai_result = grader.evaluate(parser.raw_code, parser.check_objective_rubric(), self.rubric_text)
                     
                     scores_dict = ai_result.get('scores', {})
-                    
-                    # Programmatically calculate the total score in Python
                     calculated_total = sum(int(val) for val in scores_dict.values() if isinstance(val, (int, float)))
                     
                     result = GradeResult(
-                        student_name=student_name,
-                        matched_folder=f"Matched ({parser.file_count})",
-                        file_count=parser.file_count,
-                        scores=scores_dict,
-                        final_score=calculated_total,  # Python-computed sum
-                        feedback=ai_result.get('feedback', '')
+                        student_name=student_name, matched_folder=f"Matched ({parser.file_count})",
+                        file_count=parser.file_count, scores=scores_dict,
+                        final_score=calculated_total, feedback=ai_result.get('feedback', '')
                     )
+                    self.logger.info(f"Score: {calculated_total} | Done.")
                 else:
+                    self.logger.warning(f"Folder matched but contained NO valid React Native files.")
                     result = GradeResult(student_name=student_name, matched_folder="Empty", file_count=0, feedback="No .js/.tsx files.")
             else:
+                self.logger.warning(f"No LMS folder match found for {student_name}.")
                 result = GradeResult(student_name=student_name, matched_folder="Missing", file_count=0, feedback="Folder not found.")
 
             reporter.record_grade(index, result)
@@ -174,8 +228,11 @@ class AutoGraderWindow(ctk.CTk):
             
         saved_path = reporter.save(self.output_path, self.filename_var.get())
         if saved_path:
-            self.status_label.configure(text=f"Complete! Saved to: {os.path.basename(saved_path)}")
+            self.logger.info(f"--- BATCH COMPLETE ---")
+            self.logger.info(f"Report saved to: {os.path.basename(saved_path)}")
+            self.status_label.configure(text=f"Complete! Check terminal for details.")
         else:
+            self.logger.error("Batch complete, but failed to save Excel file.")
             self.status_label.configure(text="Complete, but failed to save Excel file.")
             
         self.btn_start.configure(state="normal")
