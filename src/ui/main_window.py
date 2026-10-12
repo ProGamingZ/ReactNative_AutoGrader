@@ -3,6 +3,7 @@ import time
 from src.engine.folder_matcher import StudentFolderMatcher
 from src.engine.ast_parser import ReactNativeParser
 from src.engine.ai_grader import AIGrader
+from src.engine.excel_reporter import ExcelReporter
 import customtkinter as ctk
 from customtkinter import filedialog
 import pandas as pd
@@ -40,9 +41,16 @@ class AutoGraderWindow(ctk.CTk):
         self.btn_folder = ctk.CTkButton(self.frame, text="Browse Folder...", command=self.load_folder)
         self.btn_folder.grid(row=1, column=1, padx=10, pady=10, sticky="e")
 
-        # Rubric Selector
+        # Output Folder Selector
+        self.lbl_output = ctk.CTkLabel(self.frame, text="Save Report To: None selected")
+        self.lbl_output.grid(row=2, column=0, padx=10, pady=10, sticky="w")
+        
+        self.btn_output = ctk.CTkButton(self.frame, text="Browse Output...", command=self.load_output_folder)
+        self.btn_output.grid(row=2, column=1, padx=10, pady=10, sticky="e")
+
+        # Rubric Selector (Changed to row=3)
         self.lbl_rubric = ctk.CTkLabel(self.frame, text="Select Grading Rubric:")
-        self.lbl_rubric.grid(row=2, column=0, padx=10, pady=10, sticky="w")
+        self.lbl_rubric.grid(row=3, column=0, padx=10, pady=10, sticky="w")
         
         self.rubric_var = ctk.StringVar(value="Activity 2: Static UI")
         self.dropdown_rubric = ctk.CTkOptionMenu(self.frame, variable=self.rubric_var, values=[
@@ -50,11 +58,11 @@ class AutoGraderWindow(ctk.CTk):
             "Activity 3: Dynamic List", 
             "Activity 4: Navigation"
         ])
-        self.dropdown_rubric.grid(row=2, column=1, padx=10, pady=10, sticky="e")
+        self.dropdown_rubric.grid(row=3, column=1, padx=10, pady=10, sticky="e")
 
-        # Student Count Display
+        # Student Count Display (Changed to row=4)
         self.lbl_student_count = ctk.CTkLabel(self.frame, text="Students loaded: 0", font=ctk.CTkFont(weight="bold"))
-        self.lbl_student_count.grid(row=3, column=0, columnspan=2, padx=10, pady=(0, 10), sticky="w")
+        self.lbl_student_count.grid(row=4, column=0, columnspan=2, padx=10, pady=(0, 10), sticky="w")
 
         # --- Controls Frame ---
         # Start Button
@@ -72,6 +80,7 @@ class AutoGraderWindow(ctk.CTk):
         # Data Storage
         self.students_df = None
         self.submissions_path = None
+        self.output_path = None
 
     def load_excel(self):
         filepath = filedialog.askopenfilename(
@@ -79,6 +88,7 @@ class AutoGraderWindow(ctk.CTk):
             filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")]
         )
         if filepath:
+            self.excel_filepath = filepath
             filename = os.path.basename(filepath)
             self.lbl_excel.configure(text=f"Class List: {filename}")
             self.status_label.configure(text="Reading Excel file...")
@@ -109,9 +119,18 @@ class AutoGraderWindow(ctk.CTk):
             self.status_label.configure(text="Folder selected successfully.")
             self.check_ready_state()
 
+    def load_output_folder(self):
+        folderpath = filedialog.askdirectory(title="Select Output Folder for Graded Report")
+        if folderpath:
+            self.output_path = folderpath
+            foldername = os.path.basename(folderpath)
+            self.lbl_output.configure(text=f"Save Report To: .../{foldername}")
+            self.status_label.configure(text="Output location selected.")
+            self.check_ready_state()
+
     def check_ready_state(self):
-        # Only enable the Start button if both the Excel file and Folder are selected
-        if self.students_df is not None and self.submissions_path is not None:
+        # Require Excel, Submissions, AND Output to be selected
+        if self.students_df is not None and self.submissions_path is not None and self.output_path is not None:
             self.btn_start.configure(state="normal")
             self.status_label.configure(text="Ready to begin grading.")
 
@@ -131,50 +150,51 @@ class AutoGraderWindow(ctk.CTk):
         thread.start()
 
     def _run_grading_batch(self):
-        # Guard clause: Proves to Pylance that these are not None
         if self.students_df is None or self.submissions_path is None:
             return
 
         matcher = StudentFolderMatcher(self.submissions_path)
+        reporter = ExcelReporter(self.students_df, self.excel_filepath)
         total_students = len(self.students_df)
         
-        # Use enumerate to get a strict integer count starting at 1
         for count, (index, row) in enumerate(self.students_df.iterrows(), start=1):
             student_name = str(row['NAME'])
-            
-            # Safely update UI from the thread
             self.status_label.configure(text=f"Scanning ({count}/{total_students}): {student_name}")
             
-            # Attempt to find their submission folder
             matched_folder = matcher.find_match(student_name)
             
             if matched_folder:
                 student_folder_path = os.path.join(self.submissions_path, matched_folder)
                 parser = ReactNativeParser(student_folder_path)
                 
-                print(f"\n[FOUND] {student_name} -> {matched_folder} ({parser.file_count} files)")
-                
                 if parser.file_count > 0:
-                    # 1. Objective Check
+                    self.status_label.configure(text=f"AI Evaluating ({count}/{total_students}): {student_name}")
                     objective_results = parser.check_objective_rubric()
                     
-                    # 2. AI Evaluation
-                    self.status_label.configure(text=f"AI Evaluating ({count}/{total_students}): {student_name}")
-                    grader = AIGrader(model_name="llama3") 
+                    grader = AIGrader(model_name="llama3")  # Change to llama3.2 for speed!
                     selected_rubric = self.rubric_var.get()
-                    
-                    # Call the AI! (This may take a few seconds per student depending on your PC)
                     ai_result = grader.evaluate(parser.raw_code, objective_results, selected_rubric)
                     
-                    print(f"   [AI GRADE] {ai_result['final_score']}/100")
-                    print(f"   [FEEDBACK] {ai_result['feedback']}")
-                    
-                    # TODO: Save to Excel
+                    # Record successful grade
+                    reporter.record_grade(index, f"Matched ({parser.file_count} files)", ai_result.get('final_score', 0), ai_result.get('feedback', ''))
                 else:
-                    print("   [WARNING] No .js/.tsx files found.")
+                    # Record empty folder error
+                    reporter.record_grade(index, "Empty Folder", 0, "Folder found, but no .js/.tsx files inside.")
+            else:
+                # Record missing folder error
+                reporter.record_grade(index, "Missing", 0, "No submission folder found in the LMS archive.")
+
+            self.progress.set(count / total_students)
             
-        # Re-enable the UI when finished
-        self.status_label.configure(text="Batch scanning complete! Check the terminal output.")
+        # Batch is finished, save the file
+        self.status_label.configure(text="Saving Excel report...")
+        saved_path = reporter.save(self.output_path)
+        
+        if saved_path:
+            self.status_label.configure(text=f"Complete! Saved to: {os.path.basename(saved_path)}")
+        else:
+            self.status_label.configure(text="Complete, but failed to save Excel file.")
+
         self.btn_start.configure(state="normal")
         self.btn_excel.configure(state="normal")
         self.btn_folder.configure(state="normal")
