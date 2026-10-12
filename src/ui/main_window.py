@@ -4,6 +4,7 @@ from src.engine.folder_matcher import StudentFolderMatcher
 from src.engine.ast_parser import ReactNativeParser
 from src.engine.ai_grader import AIGrader
 from src.engine.excel_reporter import ExcelReporter
+from src.models.grade_result import GradeResult
 import customtkinter as ctk
 from customtkinter import filedialog
 import pandas as pd
@@ -171,20 +172,38 @@ class AutoGraderWindow(ctk.CTk):
                     self.status_label.configure(text=f"AI Evaluating ({count}/{total_students}): {student_name}")
                     objective_results = parser.check_objective_rubric()
                     
-                    grader = AIGrader(model_name="llama3")  # Change to llama3.2 for speed!
+                    grader = AIGrader(model_name="phi3")
                     selected_rubric = self.rubric_var.get()
                     ai_result = grader.evaluate(parser.raw_code, objective_results, selected_rubric)
                     
-                    # Record successful grade
-                    reporter.record_grade(index, f"Matched ({parser.file_count} files)", ai_result.get('final_score', 0), ai_result.get('feedback', ''))
+                    # Create structured GradeResult object
+                    result = GradeResult(
+                        student_name=student_name,
+                        matched_folder=f"Matched ({parser.file_count} files)",
+                        file_count=parser.file_count,
+                        scores=ai_result.get('scores', {}),
+                        final_score=ai_result.get('final_score', 0),
+                        feedback=ai_result.get('feedback', '')
+                    )
                 else:
-                    # Record empty folder error
-                    reporter.record_grade(index, "Empty Folder", 0, "Folder found, but no .js/.tsx files inside.")
+                    result = GradeResult(
+                        student_name=student_name,
+                        matched_folder="Empty Folder",
+                        file_count=0,
+                        final_score=0,
+                        feedback="Folder found, but no .js/.tsx files inside."
+                    )
             else:
-                # Record missing folder error
-                reporter.record_grade(index, "Missing", 0, "No submission folder found in the LMS archive.")
+                result = GradeResult(
+                    student_name=student_name,
+                    matched_folder="Missing",
+                    file_count=0,
+                    final_score=0,
+                    feedback="No submission folder found in the LMS archive."
+                )
 
-            self.progress.set(count / total_students)
+            # Record result object
+            reporter.record_grade(index, result)
             
         # Batch is finished, save the file
         self.status_label.configure(text="Saving Excel report...")
