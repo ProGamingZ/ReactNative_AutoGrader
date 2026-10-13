@@ -173,10 +173,11 @@ class AutoGraderWindow(ctk.CTk):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         log_file = os.path.join(output_path, f"Diagnostic_Report_{timestamp}.log")
         
-        file_handler = logging.FileHandler(log_file, encoding='utf-8')
-        file_handler.setLevel(logging.DEBUG)
-        file_handler.setFormatter(logging.Formatter('[%(asctime)s] [%(levelname)s] [%(module)s] %(message)s'))
-        self.logger.addHandler(file_handler)
+        # CHANGED: Assigned to self.file_handler so it can be closed later
+        self.file_handler = logging.FileHandler(log_file, encoding='utf-8')
+        self.file_handler.setLevel(logging.DEBUG)
+        self.file_handler.setFormatter(logging.Formatter('[%(asctime)s] [%(levelname)s] [%(module)s] %(message)s'))
+        self.logger.addHandler(self.file_handler)
         
         self.logger.info("--- STARTED NEW GRADING BATCH ---")
         self.logger.debug(f"Target Output Directory: {self.output_path}")
@@ -187,53 +188,68 @@ class AutoGraderWindow(ctk.CTk):
         if self.students_df is None or self.submissions_path is None or self.output_path is None:
             return
 
-        matcher = StudentFolderMatcher(self.submissions_path)
-        reporter = ExcelReporter(self.students_df, self.excel_filepath)
-        total = len(self.students_df)
-        
-        for count, (index, row) in enumerate(self.students_df.iterrows(), start=1):
-            student_name = str(row['NAME'])
-            self.status_label.configure(text=f"Grading ({count}/{total}): {student_name}")
-            self.logger.info(f"Processing Student ({count}/{total}): {student_name}")
+        # Start of the Graceful Teardown pattern
+        try:
+            matcher = StudentFolderMatcher(self.submissions_path)
+            reporter = ExcelReporter(self.students_df, self.excel_filepath)
+            total = len(self.students_df)
             
-            matched_folder = matcher.find_match(student_name)
-            
-            if matched_folder:
-                student_folder_path = os.path.join(self.submissions_path, matched_folder)
-                parser = ReactNativeParser(student_folder_path)
+            for count, (index, row) in enumerate(self.students_df.iterrows(), start=1):
+                student_name = str(row['NAME'])
+                self.status_label.configure(text=f"Grading ({count}/{total}): {student_name}")
+                self.logger.info(f"Processing Student ({count}/{total}): {student_name}")
                 
-                if parser.file_count > 0:
-                    self.logger.info(f"Files extracted. Running AI Evaluation...")
-                    grader = AIGrader(model_name=self.model_var.get())
-                    ai_result = grader.evaluate(parser.raw_code, parser.check_objective_rubric(), self.rubric_text)
+                matched_folder = matcher.find_match(student_name)
+                
+                if matched_folder:
+                    student_folder_path = os.path.join(self.submissions_path, matched_folder)
+                    parser = ReactNativeParser(student_folder_path)
                     
-                    scores_dict = ai_result.get('scores', {})
-                    calculated_total = sum(int(val) for val in scores_dict.values() if isinstance(val, (int, float)))
-                    
-                    result = GradeResult(
-                        student_name=student_name, matched_folder=f"Matched ({parser.file_count})",
-                        file_count=parser.file_count, scores=scores_dict,
-                        final_score=calculated_total, feedback=ai_result.get('feedback', '')
-                    )
-                    self.logger.info(f"Score: {calculated_total} | Done.")
+                    if parser.file_count > 0:
+                        self.logger.info(f"Files extracted. Running AI Evaluation...")
+                        grader = AIGrader(model_name=self.model_var.get())
+                        ai_result = grader.evaluate(parser.raw_code, parser.check_objective_rubric(), self.rubric_text)
+                        
+                        scores_dict = ai_result.get('scores', {})
+                        calculated_total = sum(int(val) for val in scores_dict.values() if isinstance(val, (int, float)))
+                        
+                        result = GradeResult(
+                            student_name=student_name, matched_folder=f"Matched ({parser.file_count})",
+                            file_count=parser.file_count, scores=scores_dict,
+                            final_score=calculated_total, feedback=ai_result.get('feedback', '')
+                        )
+                        self.logger.info(f"Score: {calculated_total} | Done.")
+                    else:
+                        self.logger.warning(f"Folder matched but contained NO valid React Native files.")
+                        result = GradeResult(student_name=student_name, matched_folder="Empty", file_count=0, feedback="No .js/.tsx files.")
                 else:
-                    self.logger.warning(f"Folder matched but contained NO valid React Native files.")
-                    result = GradeResult(student_name=student_name, matched_folder="Empty", file_count=0, feedback="No .js/.tsx files.")
-            else:
-                self.logger.warning(f"No LMS folder match found for {student_name}.")
-                result = GradeResult(student_name=student_name, matched_folder="Missing", file_count=0, feedback="Folder not found.")
+                    self.logger.warning(f"No LMS folder match found for {student_name}.")
+                    result = GradeResult(student_name=student_name, matched_folder="Missing", file_count=0, feedback="Folder not found.")
 
-            reporter.record_grade(index, result)
-            self.progress.set(count / total)
+                reporter.record_grade(index, result)
+                self.progress.set(count / total)
+                
+            saved_path = reporter.save(self.output_path, self.filename_var.get())
+            if saved_path:
+                self.logger.info(f"--- BATCH COMPLETE ---")
+                self.logger.info(f"Report saved to: {os.path.basename(saved_path)}")
+                self.status_label.configure(text=f"Complete! Check terminal for details.")
+            else:
+                self.logger.error("Batch complete, but failed to save Excel file.")
+                self.status_label.configure(text="Complete, but failed to save Excel file.")
+                
+        except Exception as e:
+            # Catch unexpected crashes so they don't break the thread silently
+            self.logger.error(f"FATAL BATCH ERROR: {e}")
+            self.status_label.configure(text="Grading stopped due to an error.")
             
-        saved_path = reporter.save(self.output_path, self.filename_var.get())
-        if saved_path:
-            self.logger.info(f"--- BATCH COMPLETE ---")
-            self.logger.info(f"Report saved to: {os.path.basename(saved_path)}")
-            self.status_label.configure(text=f"Complete! Check terminal for details.")
-        else:
-            self.logger.error("Batch complete, but failed to save Excel file.")
-            self.status_label.configure(text="Complete, but failed to save Excel file.")
+        finally:
+            # THIS ALWAYS RUNS: Releasing system resources
+            self.btn_start.configure(state="normal")
             
-        self.btn_start.configure(state="normal")
+            # Explicitly close the file lock and remove the handler
+            if hasattr(self, 'file_handler') and self.file_handler:
+                self.file_handler.close()
+                self.logger.removeHandler(self.file_handler)
+                self.file_handler = None
     
