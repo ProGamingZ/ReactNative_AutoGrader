@@ -6,8 +6,18 @@ class ReactNativeParser:
     def __init__(self, folder_path):
         self.folder_path = folder_path
         self.raw_code = ""
+        self.full_code = ""
         self.file_count = 0
         self._load_files()
+
+    def _file_priority(self, rel_path: str) -> tuple:
+        """Prioritizes main entry points and screen components before utility/data files."""
+        filename = os.path.basename(rel_path).lower()
+        if filename in {'app.tsx', 'app.jsx', 'app.ts', 'app.js', '_layout.tsx', '_layout.js', 'index.tsx', 'index.js'}:
+            return (0, rel_path.lower())
+        if any(folder in rel_path.lower() for folder in ('screens', 'app', 'components')):
+            return (1, rel_path.lower())
+        return (2, rel_path.lower())
 
     def _load_files(self):
         """Recursively reads React Native code files, excluding build/config clutter."""
@@ -16,24 +26,35 @@ class ReactNativeParser:
         # Config files that add prompt weight without grading value
         ignored_files = {'metro.config.js', 'babel.config.js', 'eslintrc.js', 'app.json', 'package.json', 'package-lock.json'}
 
+        matched_files = []
         for root, dirs, files in os.walk(self.folder_path):
             # Prune ignored directories in-place
             dirs[:] = [d for d in dirs if d not in ignored_dirs]
                 
             for file in files:
                 if file.endswith(('.js', '.jsx', '.ts', '.tsx')) and file not in ignored_files:
-                    file_path = os.path.join(root, file)
-                    try:
-                        with open(file_path, 'r', encoding='utf-8') as f:
-                            content = f.read()
-                            self.raw_code += f"\n\n// --- File: {file} ---\n" + content
-                            self.file_count += 1
-                    except Exception as e:
-                        print(f"Could not read {file}: {e}")
+                    full_path = os.path.join(root, file)
+                    rel_path = os.path.relpath(full_path, self.folder_path)
+                    matched_files.append((rel_path, full_path))
 
-        # CAP PROMPT SIZE: Limit raw_code to 12,000 chars (~3,000 tokens) to ensure fast CPU inference
-        if len(self.raw_code) > 12000:
-            self.raw_code = self.raw_code[:12000] + "\n\n// [NOTE: Source code truncated for length]"
+        # Sort files so main entry points and UI screens are read before utilities/mock data
+        matched_files.sort(key=lambda item: self._file_priority(item[0]))
+
+        for rel_path, file_path in matched_files:
+            try:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                    self.full_code += f"\n\n// --- File: {rel_path} ---\n" + content
+                    self.file_count += 1
+            except Exception as e:
+                logger.warning(f"Could not read {rel_path}: {e}")
+
+        # CAP PROMPT SIZE: Limit raw_code to 12,000 chars (~3,000 tokens) for AI inference,
+        # while keeping self.full_code intact for deterministic regex checks.
+        if len(self.full_code) > 12000:
+            self.raw_code = self.full_code[:12000] + "\n\n// [NOTE: Source code truncated for length]"
+        else:
+            self.raw_code = self.full_code
 
     def check_objective_rubric(self):
         """Scans code for mandatory syntax flags, embracing modern community alternatives."""
