@@ -29,7 +29,8 @@ class StudentFolderMatcher:
             score = int(match_result[1])
             
             if score >= 80:
-                logger.debug(f"Match SUCCESS: '{best_match}' (Confidence: {score})")
+                self.available_folders.remove(best_match)
+                logger.debug(f"Match SUCCESS: '{best_match}' (Confidence: {score}) - Locked folder.")
                 return best_match
             else:
                 logger.debug(f"Match FAILED: Best was '{best_match}' but score {score} is below threshold 80.")
