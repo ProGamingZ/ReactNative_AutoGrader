@@ -202,9 +202,11 @@ class AutoGraderWindow(ctk.CTk):
 
         # Start of the Graceful Teardown pattern
         try:
+            rubric_categories = AIGrader.extract_rubric_categories(self.rubric_text)
             matcher = StudentFolderMatcher(self.submissions_path)
-            reporter = ExcelReporter(self.students_df, self.excel_filepath)
+            reporter = ExcelReporter(self.students_df, self.excel_filepath, rubric_categories)
             total = len(self.students_df)
+            zero_scores = {cat: 0 for cat in rubric_categories}
             
             for count, (index, row) in enumerate(self.students_df.iterrows(), start=1):
                 student_name = str(row['NAME'])
@@ -216,27 +218,47 @@ class AutoGraderWindow(ctk.CTk):
                 if matched_folder:
                     student_folder_path = os.path.join(self.submissions_path, matched_folder)
                     parser = ReactNativeParser(student_folder_path)
+                    folder_file_ratio = f"{parser.folder_count}/{parser.file_count}"
                     
                     if parser.file_count > 0:
-                        self.logger.info(f"Files extracted. Running AI Evaluation...")
+                        self.logger.info(f"Extracted {folder_file_ratio} (Folders/Files). Running AI Evaluation...")
                         grader = AIGrader(model_name=self.model_var.get())
-                        ai_result = grader.evaluate(parser.raw_code, parser.check_objective_rubric(), self.rubric_text)
+                        ai_result = grader.evaluate(
+                            parser.raw_code,
+                            parser.check_objective_rubric(),
+                            self.rubric_text,
+                            rubric_categories
+                        )
                         
-                        scores_dict = ai_result.get('scores', {})
+                        scores_dict = ai_result.get('scores', zero_scores)
                         calculated_total = sum(int(val) for val in scores_dict.values() if isinstance(val, (int, float)))
                         
                         result = GradeResult(
-                            student_name=student_name, matched_folder=f"Matched ({parser.file_count})",
-                            file_count=parser.file_count, scores=scores_dict,
-                            final_score=calculated_total, feedback=ai_result.get('feedback', '')
+                            student_name=student_name,
+                            folder_and_files=folder_file_ratio,
+                            scores=scores_dict,
+                            final_score=calculated_total,
+                            feedback=ai_result.get('feedback', '')
                         )
                         self.logger.info(f"Score: {calculated_total} | Done.")
                     else:
-                        self.logger.warning(f"Folder matched but contained NO valid React Native files.")
-                        result = GradeResult(student_name=student_name, matched_folder="Empty", file_count=0, feedback="No .js/.tsx files.")
+                        self.logger.warning(f"Folder matched ({folder_file_ratio}) but contained NO valid React Native files.")
+                        result = GradeResult(
+                            student_name=student_name,
+                            folder_and_files=folder_file_ratio,
+                            scores=zero_scores.copy(),
+                            final_score=0,
+                            feedback="Empty folder. No .js/.tsx files."
+                        )
                 else:
                     self.logger.warning(f"No LMS folder match found for {student_name}.")
-                    result = GradeResult(student_name=student_name, matched_folder="Missing", file_count=0, feedback="Folder not found.")
+                    result = GradeResult(
+                        student_name=student_name,
+                        folder_and_files="0/0",
+                        scores=zero_scores.copy(),
+                        final_score=0,
+                        feedback="Folder not found."
+                    )
 
                 reporter.record_grade(index, result)
                 self._set_progress(count / total)
