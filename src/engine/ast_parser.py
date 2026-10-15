@@ -56,9 +56,13 @@ class ReactNativeParser:
         else:
             self.raw_code = self.full_code
 
+    def _strip_comments(self, text: str) -> str:
+        """Removes /* ... */ block comments and // single-line comments without breaking URLs."""
+        return re.sub(r'/\*[\s\S]*?\*/|(?<!:)//.*', '', text)
+
     def check_objective_rubric(self):
         """Scans code for mandatory syntax flags, embracing modern community alternatives."""
-        code = self.raw_code
+        code = self._strip_comments(self.full_code)
         flags = {
             # Activity 2: Styling (Accepts StyleSheet, styled-components, NativeWind/Tailwind, Tamagui)
             "has_core_ui": bool(re.search(r'<\s*(View|Text|Image|ScrollView)\b', code)),
