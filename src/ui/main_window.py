@@ -184,6 +184,18 @@ class AutoGraderWindow(ctk.CTk):
 
         threading.Thread(target=self._run_grading_batch, daemon=True).start()
 
+    def _set_status(self, text: str):
+        """Thread-safe helper to update the status label."""
+        self.after(0, lambda: self.status_label.configure(text=text))
+
+    def _set_progress(self, value: float):
+        """Thread-safe helper to update the progress bar."""
+        self.after(0, lambda: self.progress.set(value))
+
+    def _set_start_btn(self, state: str):
+        """Thread-safe helper to enable/disable the start button."""
+        self.after(0, lambda: self.btn_start.configure(state=state))
+
     def _run_grading_batch(self):
         if self.students_df is None or self.submissions_path is None or self.output_path is None:
             return
@@ -196,7 +208,7 @@ class AutoGraderWindow(ctk.CTk):
             
             for count, (index, row) in enumerate(self.students_df.iterrows(), start=1):
                 student_name = str(row['NAME'])
-                self.status_label.configure(text=f"Grading ({count}/{total}): {student_name}")
+                self._set_status(f"Grading ({count}/{total}): {student_name}")
                 self.logger.info(f"Processing Student ({count}/{total}): {student_name}")
                 
                 matched_folder = matcher.find_match(student_name)
@@ -227,29 +239,23 @@ class AutoGraderWindow(ctk.CTk):
                     result = GradeResult(student_name=student_name, matched_folder="Missing", file_count=0, feedback="Folder not found.")
 
                 reporter.record_grade(index, result)
-                self.progress.set(count / total)
+                self._set_progress(count / total)
                 
             saved_path = reporter.save(self.output_path, self.filename_var.get())
             if saved_path:
                 self.logger.info(f"--- BATCH COMPLETE ---")
                 self.logger.info(f"Report saved to: {os.path.basename(saved_path)}")
-                self.status_label.configure(text=f"Complete! Check terminal for details.")
+                self._set_status("Complete! Check terminal for details.")
             else:
                 self.logger.error("Batch complete, but failed to save Excel file.")
-                self.status_label.configure(text="Complete, but failed to save Excel file.")
+                self._set_status("Complete, but failed to save Excel file.")
                 
         except Exception as e:
             # Catch unexpected crashes so they don't break the thread silently
             self.logger.error(f"FATAL BATCH ERROR: {e}")
-            self.status_label.configure(text="Grading stopped due to an error.")
+            self._set_status("Grading stopped due to an error.")
             
         finally:
             # THIS ALWAYS RUNS: Releasing system resources
-            self.btn_start.configure(state="normal")
-            
-            # Explicitly close the file lock and remove the handler
-            if hasattr(self, 'file_handler') and self.file_handler:
-                self.file_handler.close()
-                self.logger.removeHandler(self.file_handler)
-                self.file_handler = None
+            self._set_start_btn("normal")
     
