@@ -41,11 +41,12 @@ JSON Format:
             logger.debug(f"Sending prompt to Ollama model: {self.model_name}...")
             response = ollama.chat(
                 model=self.model_name,
+                format="json",
                 messages=[
                     {'role': 'system', 'content': system_prompt},
                     {'role': 'user', 'content': f"Student Source Code:\n\n{code_text}"}
                 ],
-                options={"temperature": 0.1, "num_predict": 300, "num_thread": 4} 
+                options={"temperature": 0.1, "num_predict": 750, "num_thread": 4} 
             )
             
             cleaned = self.clean_json(response['message']['content'])
