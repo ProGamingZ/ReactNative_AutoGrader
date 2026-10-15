@@ -7,6 +7,7 @@ class ReactNativeParser:
         self.folder_path = folder_path
         self.raw_code = ""
         self.full_code = ""
+        self.folder_count = 0
         self.file_count = 0
         self._load_files()
 
@@ -30,6 +31,7 @@ class ReactNativeParser:
         for root, dirs, files in os.walk(self.folder_path):
             # Prune ignored directories in-place
             dirs[:] = [d for d in dirs if d not in ignored_dirs]
+            self.folder_count += 1
                 
             for file in files:
                 if file.endswith(('.js', '.jsx', '.ts', '.tsx')) and file not in ignored_files:

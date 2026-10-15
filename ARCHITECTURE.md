@@ -12,40 +12,36 @@ The system uses a hybrid grading mechanism to balance 100% accuracy on objective
     *   *UI Framework:* `CustomTkinter` or `PyQt` (Minimalist desktop interface).
     *   *Data Handling:* `pandas` and `openpyxl` (Reading attendance sheets, generating report sheets).
     *   *String Matching:* `thefuzz` (Fuzzy matching for matching student folders to Excel names).
-*   **Code Parsing:** Background Node.js script using `@babel/parser` or Python-based JS parsers (`esprima-python`).
-*   **Offline AI Engine:** Local LLM (e.g., Llama 3 or Mistral) running via `Ollama` or `llama-cpp-python`.
+*   **Code Parsing:** Native Python regex engine (`re`) with comment stripping, entry-point file prioritization (`App.tsx`, `index.js`, `_layout.tsx`), and directory/file counters.
+*   **Offline AI Engine:** Local LLM (`phi3` or `llama3`) running via `Ollama` with native JSON mode (`format="json"`).
 
 ## 3. Application Workflow
-1.  **Input Configuration:** User selects the grading rubric (Activity 2, 3, or 4), uploads the class list Excel file (`BSCS...Attendance.xlsx`), and selects the folder containing the extracted LMS ZIP file.
-2.  **Folder Matching & Extraction:** The app uses fuzzy matching to map LMS folder names (`LastName_FirstName`) to the official IDs in the Excel sheet (starting from Row 3).
-3.  **Code Parsing:** The app scans the `.js`/`.tsx` files inside the student's folder to verify React Native syntax and core component usage.
-4.  **AI Evaluation:** The source code and rubric guidelines are passed to the local LLM to evaluate Flexbox architecture and visual design heuristics.
-5.  **Report Generation:** The app compiles the grades and feedback, then writes them to a new Excel file.
+1.  **Input Configuration:** User selects the Markdown grading rubric (`Activity2_Rubric.md`, `Activity3_Rubric.md`, or `Activity4_Rubric.md`), uploads the class list Excel file (`DATA` sheet, starting at Row 3), and selects the extracted LMS submissions folder and output directory.
+2.  **Exclusive Folder Matching:** `StudentFolderMatcher` uses fuzzy matching (`thefuzz` `token_set_ratio` $\ge 80$) to map LMS folders to Excel student names, locking each matched folder so it cannot be claimed twice.
+3.  **Prioritized Code Parsing:** `ReactNativeParser` counts submitted folders and valid `.js`/`.jsx`/`.ts`/`.tsx` files (`Folders/Files` ratio), strips comments, scans the full codebase for objective syntax flags (including modern alternatives like `FlashList`, `Zustand`, and `Expo Router`), and caps the LLM prompt payload at 12,000 characters with entry points loaded first.
+4.  **AI Evaluation:** `AIGrader` populates integer scores strictly into the pre-extracted Markdown rubric columns and generates telegraphic feedback capped at 20 words or less.
+5.  **Report Generation:** `ExcelReporter` writes the results into a formatted `.xlsx` workbook (`GRADES` sheet).
 
 ## 4. AI Prompting Strategy
 To ensure consistent and reliable grading from the offline AI, the application enforces the following constraints:
-*   **Structured Output (JSON Schema):** The AI is forced to return a strict JSON format containing scores, deductions, and feedback.
-*   **Zero Creativity:** The LLM temperature is set to `0.0` or `0.1` for deterministic, reproducible results.
-*   **Rubric Anchors:** Prompts contain strict point anchors (e.g., "Assign 25 pts if `StyleSheet` uses `flexDirection`. Assign 15 pts if hardcoded dimensions are used.").
+*   **Pre-Allocated Rubric Schema:** Rubric category columns are parsed directly from the selected `.md` file prior to inference. The AI is restricted to filling integer values for those exact keys and cannot create new columns.
+*   **Native JSON Enforcement:** Ollama is invoked with `format="json"`, `temperature: 0.1`, and `num_predict: 750` to prevent syntax errors or mid-response truncation.
+*   **Hard 20-Word Feedback Cap:** Both the system prompt and Python post-processing strictly cap `AI Feedback` at $\le 20$ words for fast, telegraphic grading explanations.
 
 ## 5. Excel Output Format
-The final generated Excel file will append the grading results to the original class list format:
+The generated Excel file preserves the first 5 roster columns (`NO`, `ID`, `NAME`, `PROGRAM`, `YEAR`), followed by `Folder & Files` (`Folders/Files` count), the pre-allocated Markdown rubric columns, `Final Score`, and `AI Feedback`:
 
-| Name | Matched Folder/Files | Component Usage (25) | Flexbox Layout (30) | UI Aesthetics (25) | Code Structure (20) | Final Score | AI Feedback & Deductions |
-| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| Abia, Renz Clint C. | Matched (3 files) | 25 | 28 | 22 | 19 | 94 | Clean Flexbox implementation; good spacing. |
-| Albano, Andrew Wayne D. | Matched (1 file) | 15 | 10 | 10 | 10 | 45 | Relies on inline fixed dimensions. |
-| Alpez, Graci May J. | Folder Missing | 0 | 0 | 0 | 0 | 0 | No submission folder found in the LMS archive. |
+| NO | ID | NAME | PROGRAM | YEAR | Folder & Files | Component Usage & JSX Structure (Max: 25 pts) | Flexbox Layout & Responsiveness (Max: 30 pts) | UI Aesthetics & Visual Polish (Max: 25 pts) | Code Organization & Completeness (Max: 20 pts) | Final Score | AI Feedback |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| 1 | 2023-001 | Abia, Renz Clint C. | BSCS | 3 | 1/3 | 25 | 28 | 22 | 19 | 94 | Clean Flexbox layout and modular component structure; minor spacing inconsistency on header. |
+| 2 | 2023-002 | Albano, Andrew Wayne D. | BSCS | 3 | 2/11 | 15 | 10 | 10 | 10 | 45 | Uses hardcoded pixel widths instead of responsive Flexbox properties. |
+| 3 | 2023-003 | Alpez, Graci May J. | BSCS | 3 | 0/0 | 0 | 0 | 0 | 0 | 0 | Folder not found. |
 
-## 6. SOLID Design Principles Implementation
-The codebase is structured to be scalable, flexible, and maintainable:
-*   **S - Single Responsibility:** Separate modules for file matching (`StudentFolderMatcher`), parsing (`ASTParser`), AI prompting (`AIGrader`), and Excel generation (`ExcelReporter`).
-*   **O - Open/Closed:** A base `BaseRubricEvaluator` interface is used. New rubrics (e.g., `Activity5Evaluator`) can be added without modifying the core scanning loop.
-*   **L - Liskov Substitution:** All rubric evaluators return a standardized `GradeResult` object, making them fully interchangeable in the main engine.
-*   **I - Interface Segregation:** Code parsing logic is separated from AI evaluation logic. Objective syntax checkers do not need to implement AI connection methods.
-*   **D - Dependency Inversion:** The main pipeline depends on high-level abstractions like `ILLMClient`. Switching from Ollama to another AI engine only requires swapping the low-level client class.
+## 6. Modular Design Principles
+*   **Single Responsibility:** Separate modules handle folder matching (`StudentFolderMatcher`), code/flag extraction (`ReactNativeParser`), LLM evaluation (`AIGrader`), data transfer (`GradeResult`), and spreadsheet export (`ExcelReporter`).
+*   **Open/Closed via Dynamic Markdown Rubrics:** New activities (e.g., Activities 5, 6, and 7) can be graded by loading a new `.md` rubric file without modifying the core grading loop or Excel reporter.
+*   **Standardized Data Contract:** All grading outcomes (matched, empty folder, or missing submission) produce a uniform `GradeResult` dataclass consumed by `ExcelReporter`.
 
-## 7. UI/UX Principles
-*   **Asynchronous Processing:** All grading runs on background threads to prevent the desktop UI from freezing.
-*   **Progress Tracking:** A progress bar and status text (e.g., "Grading student 12 of 35...") keep the user informed.
-*   **Fail-Safe Execution:** Strict `try-except` blocks isolate file errors (e.g., corrupted files) so one bad submission doesn't crash the entire grading batch.
+## 7. UI/UX & Concurrency Principles
+*   **Thread-Safe Asynchronous UI:** Batch grading runs in a background daemon thread, while all `CustomTkinter` widget updates (`status_label`, `progress`, `btn_start`, and `TextBoxLogHandler`) are marshaled onto the main GUI thread via `.after(0, ...)`.
+*   **Dual-Stream Logging:** High-level batch progress (`INFO`) streams to the built-in GUI terminal, while verbose diagnostics (`DEBUG`) write to a timestamped `.log` file with automatic file-handle teardown in a `finally` block.
