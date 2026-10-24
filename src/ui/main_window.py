@@ -73,8 +73,12 @@ class AutoGraderWindow(ctk.CTk):
         self.entry_filename = ctk.CTkEntry(self.frame, textvariable=self.filename_var, width=150)
         self.entry_filename.grid(row=4, column=0, padx=10, pady=10, sticky="w")
         
-        self.model_var = ctk.StringVar(value="phi3")
-        self.dropdown_model = ctk.CTkOptionMenu(self.frame, variable=self.model_var, values=["phi3", "llama3"])
+        self.model_var = ctk.StringVar(value="qwen2.5-coder:3b")
+        self.dropdown_model = ctk.CTkOptionMenu(
+            self.frame,
+            variable=self.model_var,
+            values=["qwen2.5-coder:3b", "qwen2.5-coder:1.5b", "llama3.2:3b", "llama3"]
+        )
         self.dropdown_model.grid(row=4, column=1, padx=10, pady=10, sticky="e")
 
         self.lbl_student_count = ctk.CTkLabel(self.frame, text="Students loaded: 0", font=ctk.CTkFont(weight="bold"))
@@ -316,6 +320,10 @@ class AutoGraderWindow(ctk.CTk):
             
         finally:
             # THIS ALWAYS RUNS: Releasing system resources
+            self._set_stop_btn("disabled")
+            self._set_start_btn("normal")
+
+            # Explicitly close the file lock and remove the handler
             self._set_stop_btn("disabled")
             self._set_start_btn("normal")
     
