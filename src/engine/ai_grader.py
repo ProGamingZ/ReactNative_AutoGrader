@@ -4,7 +4,7 @@ import ollama
 import logging
 logger = logging.getLogger("AutoGrader")
 class AIGrader:
-    def __init__(self, model_name="phi3"):
+    def __init__(self, model_name="qwen2.5-coder:3b"):
         self.model_name = model_name
 
     def clean_json(self, text):
@@ -64,14 +64,14 @@ JSON Format:
                     {'role': 'system', 'content': system_prompt},
                     {'role': 'user', 'content': f"Student Source Code:\n\n{code_text}"}
                 ],
-                options={"temperature": 0.1, "num_predict": 750, "num_thread": 4},
+                options={"temperature": 0.1, "num_predict": 750, "num_thread": 4, "num_ctx": 4096},
                 stream=True
             )
             
             raw_content = ""
             for chunk in stream:
                 if stop_event and stop_event.is_set():
-                    stream.close()  # Immediately terminate Ollama generation
+                    getattr(stream, "close", lambda: None)() # Immediately terminate Ollama generation
                     logger.warning("AI generation aborted by user Stop signal.")
                     return None
                 raw_content += chunk['message']['content']
