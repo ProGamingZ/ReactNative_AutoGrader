@@ -80,8 +80,22 @@ class AutoGraderWindow(ctk.CTk):
         self.lbl_student_count = ctk.CTkLabel(self.frame, text="Students loaded: 0", font=ctk.CTkFont(weight="bold"))
         self.lbl_student_count.grid(row=5, column=0, columnspan=2, padx=10, pady=(0, 10), sticky="w")
 
-        self.btn_start = ctk.CTkButton(self, text="Start Grading Batch", height=40, fg_color="green", hover_color="darkgreen", state="disabled", command=self.start_grading)
-        self.btn_start.grid(row=2, column=0, pady=10)
+        self.stop_event = threading.Event()
+
+        self.btn_frame = ctk.CTkFrame(self, fg_color="transparent")
+        self.btn_frame.grid(row=2, column=0, pady=10)
+
+        self.btn_start = ctk.CTkButton(
+            self.btn_frame, text="Start Grading Batch", width=190, height=40,
+            fg_color="green", hover_color="darkgreen", state="disabled", command=self.start_grading
+        )
+        self.btn_start.grid(row=0, column=0, padx=10)
+
+        self.btn_stop = ctk.CTkButton(
+            self.btn_frame, text="Stop & Save", width=190, height=40,
+            fg_color="#b30000", hover_color="#7a0000", state="disabled", command=self.stop_grading
+        )
+        self.btn_stop.grid(row=0, column=1, padx=10)
 
         self.progress = ctk.CTkProgressBar(self, width=400)
         self.progress.grid(row=3, column=0, pady=10)
@@ -163,7 +177,9 @@ class AutoGraderWindow(ctk.CTk):
             self.status_label.configure(text="Please select an output folder before starting.")
             return
 
+        self.stop_event.clear()
         self.btn_start.configure(state="disabled")
+        self.btn_stop.configure(state="normal")
         self.progress.set(0)
         self.terminal.configure(state="normal")
         self.terminal.delete("1.0", "end") # Clear terminal on new run
@@ -173,7 +189,6 @@ class AutoGraderWindow(ctk.CTk):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         log_file = os.path.join(output_path, f"Diagnostic_Report_{timestamp}.log")
         
-        # CHANGED: Assigned to self.file_handler so it can be closed later
         self.file_handler = logging.FileHandler(log_file, encoding='utf-8')
         self.file_handler.setLevel(logging.DEBUG)
         self.file_handler.setFormatter(logging.Formatter('[%(asctime)s] [%(levelname)s] [%(module)s] %(message)s'))
@@ -183,6 +198,18 @@ class AutoGraderWindow(ctk.CTk):
         self.logger.debug(f"Target Output Directory: {self.output_path}")
 
         threading.Thread(target=self._run_grading_batch, daemon=True).start()
+
+    def stop_grading(self):
+        """Signals the background thread and Ollama stream to stop immediately and save."""
+        if not self.stop_event.is_set():
+            self.stop_event.set()
+            self.btn_stop.configure(state="disabled")
+            self.status_label.configure(text="Stopping batch... Saving analyzed data...")
+            self.logger.warning("--- STOP REQUESTED BY USER: Halting and saving partial report... ---")
+
+    def _set_stop_btn(self, state: str):
+        """Thread-safe helper to enable/disable the stop button."""
+        self.after(0, lambda: self.btn_stop.configure(state=state))
 
     def _set_status(self, text: str):
         """Thread-safe helper to update the status label."""
@@ -209,6 +236,10 @@ class AutoGraderWindow(ctk.CTk):
             zero_scores = {cat: 0 for cat in rubric_categories}
             
             for count, (index, row) in enumerate(self.students_df.iterrows(), start=1):
+                if self.stop_event.is_set():
+                    self.logger.info(f"Batch stopped at student {count}/{total}. Saving analyzed records...")
+                    break
+
                 student_name = str(row['NAME'])
                 self._set_status(f"Grading ({count}/{total}): {student_name}")
                 self.logger.info(f"Processing Student ({count}/{total}): {student_name}")
@@ -227,8 +258,14 @@ class AutoGraderWindow(ctk.CTk):
                             parser.raw_code,
                             parser.check_objective_rubric(),
                             self.rubric_text,
-                            rubric_categories
+                            rubric_categories,
+                            stop_event=self.stop_event
                         )
+                        
+                        # If user clicked Stop while AI was mid-evaluation, exit loop and save previous data
+                        if ai_result is None or self.stop_event.is_set():
+                            self.logger.info(f"Aborted in-progress evaluation for {student_name}.")
+                            break
                         
                         scores_dict = ai_result.get('scores', zero_scores)
                         calculated_total = sum(int(val) for val in scores_dict.values() if isinstance(val, (int, float)))
@@ -279,5 +316,6 @@ class AutoGraderWindow(ctk.CTk):
             
         finally:
             # THIS ALWAYS RUNS: Releasing system resources
+            self._set_stop_btn("disabled")
             self._set_start_btn("normal")
     

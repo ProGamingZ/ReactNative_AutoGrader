@@ -29,7 +29,7 @@ class AIGrader:
             return " ".join(words[:max_words])
         return " ".join(words)
 
-    def evaluate(self, code_text, objective_flags, rubric_text, rubric_categories):
+    def evaluate(self, code_text, objective_flags, rubric_text, rubric_categories, stop_event=None):
         # Build exact JSON score template from pre-parsed rubric columns
         score_template = {cat: 0 for cat in rubric_categories}
 
@@ -57,17 +57,26 @@ JSON Format:
 
         try:
             logger.debug(f"Sending prompt to Ollama model: {self.model_name}...")
-            response = ollama.chat(
+            stream = ollama.chat(
                 model=self.model_name,
                 format="json",
                 messages=[
                     {'role': 'system', 'content': system_prompt},
                     {'role': 'user', 'content': f"Student Source Code:\n\n{code_text}"}
                 ],
-                options={"temperature": 0.1, "num_predict": 750, "num_thread": 4} 
+                options={"temperature": 0.1, "num_predict": 750, "num_thread": 4},
+                stream=True
             )
             
-            cleaned = self.clean_json(response['message']['content'])
+            raw_content = ""
+            for chunk in stream:
+                if stop_event and stop_event.is_set():
+                    stream.close()  # Immediately terminate Ollama generation
+                    logger.warning("AI generation aborted by user Stop signal.")
+                    return None
+                raw_content += chunk['message']['content']
+            
+            cleaned = self.clean_json(raw_content)
             logger.debug(f"Raw AI Output: {cleaned}")
             parsed = json.loads(cleaned)
             raw_scores = parsed.get("scores", {})
