@@ -73,15 +73,11 @@ class AutoGraderWindow(ctk.CTk):
         self.entry_filename = ctk.CTkEntry(self.frame, textvariable=self.filename_var, width=150)
         self.entry_filename.grid(row=4, column=0, padx=10, pady=10, sticky="w")
         
-        self.model_var = ctk.StringVar(value="qwen2.5-coder:3b")
+        self.model_var = ctk.StringVar(value="qwen2.5-coder:7b")
         self.dropdown_model = ctk.CTkOptionMenu(
             self.frame,
             variable=self.model_var,
-            values=[
-                "qwen2.5-coder:7b", "qwen2.5-coder:3b", "qwen2.5-coder:1.5b", 
-                "hermes3:3b", "gemma2:2b", "granite3.1-dense:2b", 
-                "llama3.2:3b", "llama3", "mistral:7b"
-            ]
+            values=["qwen2.5-coder:7b", "llama3.2:3b", "qwen2.5-coder:3b"]
         )
         self.dropdown_model.grid(row=4, column=1, padx=10, pady=10, sticky="e")
 
@@ -185,9 +181,15 @@ class AutoGraderWindow(ctk.CTk):
             self.status_label.configure(text="Please select an output folder before starting.")
             return
 
+        # Lock active model and filename so UI changes mid-run cannot corrupt the batch
+        self.active_model = self.model_var.get()
+        self.active_filename = self.filename_var.get()
+
         self.stop_event.clear()
         self.btn_start.configure(state="disabled")
         self.btn_stop.configure(state="normal")
+        self.entry_filename.configure(state="disabled")
+        self.dropdown_model.configure(state="disabled")
         self.progress.set(0)
         self.terminal.configure(state="normal")
         self.terminal.delete("1.0", "end") # Clear terminal on new run
@@ -195,20 +197,25 @@ class AutoGraderWindow(ctk.CTk):
         
         # Setup File Handler (Write everything to .log file)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        # Swap the colon for an underscore to create the (modelName_parameterCount) format
-        model_safe_name = self.model_var.get().replace(':', '_')
+        model_safe_name = self.active_model.replace(':', '_')
         log_file = os.path.join(output_path, f"Diagnostic_Report_{timestamp}_{model_safe_name}.log")
         
         self.file_handler = logging.FileHandler(log_file, encoding='utf-8')
-
         self.file_handler.setLevel(logging.DEBUG)
         self.file_handler.setFormatter(logging.Formatter('[%(asctime)s] [%(levelname)s] [%(module)s] %(message)s'))
         self.logger.addHandler(self.file_handler)
         
-        self.logger.info("--- STARTED NEW GRADING BATCH ---")
+        self.logger.info(f"--- STARTED NEW GRADING BATCH (Model: {self.active_model}) ---")
         self.logger.debug(f"Target Output Directory: {self.output_path}")
 
         threading.Thread(target=self._run_grading_batch, daemon=True).start()
+
+    def _set_inputs_state(self, state: str):
+        """Thread-safe helper to enable/disable the filename entry and model dropdown."""
+        def update():
+            self.entry_filename.configure(state=state)
+            self.dropdown_model.configure(state=state)
+        self.after(0, update)
 
     def stop_grading(self):
         """Signals the background thread and Ollama stream to stop immediately and save."""
@@ -264,7 +271,7 @@ class AutoGraderWindow(ctk.CTk):
                     
                     if parser.file_count > 0:
                         self.logger.info(f"Extracted {folder_file_ratio} (Folders/Files). Running AI Evaluation...")
-                        grader = AIGrader(model_name=self.model_var.get())
+                        grader = AIGrader(model_name=self.active_model)
                         ai_result = grader.evaluate(
                             parser.raw_code,
                             parser.check_objective_rubric(self.rubric_text),
@@ -311,7 +318,7 @@ class AutoGraderWindow(ctk.CTk):
                 reporter.record_grade(index, result)
                 self._set_progress(count / total)
                 
-            saved_path = reporter.save(self.output_path, self.filename_var.get())
+            saved_path = reporter.save(self.output_path, self.active_filename)
             if saved_path:
                 self.logger.info(f"--- BATCH COMPLETE ---")
                 self.logger.info(f"Report saved to: {os.path.basename(saved_path)}")
@@ -326,15 +333,16 @@ class AutoGraderWindow(ctk.CTk):
             self._set_status("Grading stopped due to an error.")
             
         finally:
-            # THIS ALWAYS RUNS: Unload LLM from RAM/VRAM and release system resources
+            # THIS ALWAYS RUNS: Unload the exact locked model from RAM/VRAM and release resources
             try:
-                AIGrader(model_name=self.model_var.get()).unload_model()
+                AIGrader(model_name=self.active_model).unload_model()
             except Exception:
                 pass
 
             self._set_stop_btn("disabled")
             self._set_start_btn("normal")
-            
+            self._set_inputs_state("normal")
+
             # Explicitly close the file lock and remove the handler so the .log file can be edited
             if hasattr(self, 'file_handler') and self.file_handler:
                 self.file_handler.close()

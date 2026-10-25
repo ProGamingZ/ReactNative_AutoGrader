@@ -50,10 +50,11 @@ STRICT SCORING TIERS (Do NOT give 100% unless code is flawless):
 - EXCELLENT (85% to 100% of category max): All required flags are True, clean modular components, responsive Flexbox, and zero anti-patterns.
 
 Instructions:
-1. Deduct points critically for any code flaws, inline styling, fixed pixel dimensions, or poor organization.
-2. Only mention tools/components that actually appear in the Student Source Code.
-3. Keep "feedback" to a HARD MAXIMUM of 20 words. State specific code flaws or strengths directly.
-4. Output ONLY valid JSON matching the exact keys below:
+1. Deduct points critically for genuine code flaws, inline styling, fixed pixel dimensions, or poor organization.
+2. IMPORTANT: Files ending with "[File truncated...]" or "[NOTE: Source code truncated for length]" were cut off by the parser to save memory. Do NOT deduct points or penalize the student for missing closing tags, unclosed brackets, or incomplete components at the end of truncated files.
+3. Only mention tools/components that actually appear in the Student Source Code.
+4. Keep "feedback" to a HARD MAXIMUM of 20 words. State specific code flaws or strengths directly.
+5. Output ONLY valid JSON matching the exact keys below:
 
 {json.dumps({"scores": score_template, "feedback": "Specific reason for deductions or praise in under 20 words."}, indent=4)}"""
 
