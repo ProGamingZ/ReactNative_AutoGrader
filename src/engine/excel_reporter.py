@@ -31,6 +31,9 @@ class ExcelReporter:
 
     def save(self, output_dir, custom_filename):
         """Saves the dataframe to a formatted Excel file in the chosen directory."""
+        # Replace colons and other illegal Windows filename characters with underscores
+        for invalid_char in [':', '/', '\\', '*', '?', '"', '<', '>', '|']:
+            custom_filename = custom_filename.replace(invalid_char, '_')
         if not custom_filename.endswith(".xlsx"):
             custom_filename += ".xlsx"
             
