@@ -114,3 +114,12 @@ Instructions:
                 "scores": {cat: 0 for cat in rubric_categories},
                 "feedback": "AI grading error. Manual review required."
             }
+
+    def unload_model(self):
+        """Immediately unloads the model from RAM and GPU VRAM without stopping the Ollama service."""
+        try:
+            logger.info(f"Unloading model '{self.model_name}' from RAM/VRAM...")
+            ollama.generate(model=self.model_name, prompt="", keep_alive=0)
+            logger.info(f"Model '{self.model_name}' successfully unloaded from memory.")
+        except Exception as e:
+            logger.debug(f"Could not unload model: {e}")
