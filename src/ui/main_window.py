@@ -77,7 +77,11 @@ class AutoGraderWindow(ctk.CTk):
         self.dropdown_model = ctk.CTkOptionMenu(
             self.frame,
             variable=self.model_var,
-            values=["qwen2.5-coder:3b", "qwen2.5-coder:1.5b", "llama3.2:3b", "llama3"]
+            values=[
+                "qwen2.5-coder:7b", "qwen2.5-coder:3b", "qwen2.5-coder:1.5b", 
+                "hermes3:3b", "gemma2:2b", "granite3.1-dense:2b", 
+                "llama3.2:3b", "llama3", "mistral:7b"
+            ]
         )
         self.dropdown_model.grid(row=4, column=1, padx=10, pady=10, sticky="e")
 
@@ -191,9 +195,12 @@ class AutoGraderWindow(ctk.CTk):
         
         # Setup File Handler (Write everything to .log file)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        log_file = os.path.join(output_path, f"Diagnostic_Report_{timestamp}.log")
+        # Swap the colon for an underscore to create the (modelName_parameterCount) format
+        model_safe_name = self.model_var.get().replace(':', '_')
+        log_file = os.path.join(output_path, f"Diagnostic_Report_{timestamp}_{model_safe_name}.log")
         
         self.file_handler = logging.FileHandler(log_file, encoding='utf-8')
+
         self.file_handler.setLevel(logging.DEBUG)
         self.file_handler.setFormatter(logging.Formatter('[%(asctime)s] [%(levelname)s] [%(module)s] %(message)s'))
         self.logger.addHandler(self.file_handler)
