@@ -40,20 +40,32 @@ class ReactNativeParser:
 
         matched_files.sort(key=lambda item: self._file_priority(item[0]))
 
+        file_contents = []
         for rel_path, file_path in matched_files:
             try:
                 with open(file_path, 'r', encoding='utf-8') as f:
                     content = f.read()
                     self.full_code += f"\n\n// --- File: {rel_path} ---\n" + content
+                    file_contents.append((rel_path, content))
                     self.file_count += 1
             except Exception as e:
                 logger.warning(f"Could not read {rel_path}: {e}")
 
-        # CAP PROMPT SIZE: Limit raw_code to 8,000 chars (~2,000 tokens) for fast inference
-        if len(self.full_code) > 8000:
-            self.raw_code = self.full_code[:8000] + "\n\n// [NOTE: Source code truncated for length]"
-        else:
+        # Build AI prompt payload: ensure every file gets represented if total > 8,000 chars
+        max_total_chars = 8000
+        if len(self.full_code) <= max_total_chars:
             self.raw_code = self.full_code
+        else:
+            manifest = "// Submitted Files: " + ", ".join(r for r, _ in file_contents) + "\n"
+            per_file_budget = max(800, (max_total_chars - len(manifest)) // max(1, len(file_contents)))
+            chunks = [manifest]
+            for rel_path, content in file_contents:
+                header = f"\n// --- File: {rel_path} ---\n"
+                if len(content) > per_file_budget:
+                    chunks.append(header + content[:per_file_budget] + "\n// [File truncated...]")
+                else:
+                    chunks.append(header + content)
+            self.raw_code = "".join(chunks)[:max_total_chars] + "\n\n// [NOTE: Source code truncated for length]"
 
     def _strip_comments(self, text: str) -> str:
         """Removes /* ... */ block comments and // single-line comments without breaking URLs."""

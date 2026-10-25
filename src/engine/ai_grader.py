@@ -14,7 +14,11 @@ class AIGrader:
             text = text.split("```json")[1].split("```")[0]
         elif "```" in text:
             text = text.split("```")[1].split("```")[0]
-        return text.strip()
+        text = text.strip()
+        # Auto-heal if LLM hit token limit inside the "feedback" string
+        if text.startswith("{") and not text.endswith("}"):
+            text = text.rstrip('"') + '"}'
+        return text
     
     @staticmethod
     def extract_rubric_categories(rubric_text: str) -> list:
@@ -42,7 +46,7 @@ Verified Syntax Flags (True = present in student code, False = missing):
 
 STRICT SCORING TIERS (Do NOT give 100% unless code is flawless):
 - INCOMPLETE (0% to 40% of category max): Required syntax flag for that category is False, or feature is missing/broken.
-- AVERAGE (60% to 84% of category max): Required flags are True, but code has flaws (e.g., inline style objects instead of StyleSheet, hardcoded pixel heights/widths instead of Flexbox, messy nesting, single giant unmodular component, or missing keyExtractor/params).
+- AVERAGE (60% to 84% of category max): Required flags are True, but code has flaws (e.g., inline style objects instead of StyleSheet, hardcoded pixel heights/widths instead of Flexbox, messy nesting, single giant unmodular component).
 - EXCELLENT (85% to 100% of category max): All required flags are True, clean modular components, responsive Flexbox, and zero anti-patterns.
 
 Instructions:
@@ -64,7 +68,7 @@ Instructions:
                 ],
                 options={
                     "temperature": 0.1,
-                    "num_predict": 180,
+                    "num_predict": 250,
                     "num_ctx": 3072,
                     "num_thread": 6
                 },
