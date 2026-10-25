@@ -1,6 +1,9 @@
 python -m venv venv
 .\venv\Scripts\activate
 
+For Checking CPU|GPU usage
+ollama ps
+
 
 Force Flash Attention, 8-bit KV Cache Quantization (q8_0), and 1 Loaded Model Max:
 setx OLLAMA_FLASH_ATTENTION "1"
