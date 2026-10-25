@@ -260,7 +260,7 @@ class AutoGraderWindow(ctk.CTk):
                         grader = AIGrader(model_name=self.model_var.get())
                         ai_result = grader.evaluate(
                             parser.raw_code,
-                            parser.check_objective_rubric(),
+                            parser.check_objective_rubric(self.rubric_text),
                             self.rubric_text,
                             rubric_categories,
                             stop_event=self.stop_event
@@ -322,8 +322,10 @@ class AutoGraderWindow(ctk.CTk):
             # THIS ALWAYS RUNS: Releasing system resources
             self._set_stop_btn("disabled")
             self._set_start_btn("normal")
-
-            # Explicitly close the file lock and remove the handler
-            self._set_stop_btn("disabled")
-            self._set_start_btn("normal")
+            
+            # Explicitly close the file lock and remove the handler so the .log file can be edited
+            if hasattr(self, 'file_handler') and self.file_handler:
+                self.file_handler.close()
+                self.logger.removeHandler(self.file_handler)
+                self.file_handler = None
     
