@@ -319,7 +319,12 @@ class AutoGraderWindow(ctk.CTk):
             self._set_status("Grading stopped due to an error.")
             
         finally:
-            # THIS ALWAYS RUNS: Releasing system resources
+            # THIS ALWAYS RUNS: Unload LLM from RAM/VRAM and release system resources
+            try:
+                AIGrader(model_name=self.model_var.get()).unload_model()
+            except Exception:
+                pass
+
             self._set_stop_btn("disabled")
             self._set_start_btn("normal")
             
