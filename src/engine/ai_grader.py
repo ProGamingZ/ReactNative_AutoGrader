@@ -61,7 +61,7 @@ class AIGrader:
             format="json",
             messages=[
                 {'role': 'system', 'content': system_prompt},
-                {'role': 'user', 'content': f"Student Source Code:\n\n{code_text}"}
+                {'role': 'user', 'content': user_prompt}
             ],
             options={
                 "temperature": 0.1,
@@ -81,13 +81,12 @@ class AIGrader:
             raw_content += chunk['message']['content']
         return raw_content
 
-    def _call_groq(self, system_prompt: str, code_text: str, stop_event) -> str | None:
-        """Calls Groq Cloud API with reasoning_effort control, 400 JSON fallback, and 429 backoff."""
+    def _call_groq(self, system_prompt: str, user_prompt: str, stop_event) -> str | None:
+        """Calls Groq Cloud API with prompt caching, retry-after header parsing, and TPD quota protection."""
         client = Groq(api_key=self.api_key)
-        max_retries = 4
+        max_retries = 5
         use_json_mode = True
 
-        # Configure model-specific reasoning effort so Chain-of-Thought never starves JSON output
         extra_kwargs = {}
         model_lower = self.model_name.lower()
         if "gpt-oss" in model_lower:
@@ -104,7 +103,7 @@ class AIGrader:
                     "model": self.model_name,
                     "messages": [
                         {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": f"Student Source Code:\n\n{code_text}"}
+                        {"role": "user", "content": user_prompt}
                     ],
                     "temperature": 0.1,
                     "max_completion_tokens": 2048,
@@ -126,11 +125,11 @@ class AIGrader:
                     if delta:
                         raw_content += delta
 
-                self._interruptible_sleep(2.2, stop_event)
+                # 2.5s pacing pause to stay smoothly under 8K TPM
+                self._interruptible_sleep(2.5, stop_event)
                 return raw_content
 
             except BadRequestError as e:
-                # Handle Groq HTTP 400 'json_validate_failed' on gpt-oss models
                 err_body = getattr(e, "body", {}) or {}
                 failed_gen = err_body.get("error", {}).get("failed_generation", "")
                 if failed_gen and "{" in failed_gen:
@@ -141,9 +140,25 @@ class AIGrader:
                 if not self._interruptible_sleep(1.5, stop_event):
                     return None
 
-            except RateLimitError:
-                wait_time = 12.0 * attempt
-                logger.warning(f"Groq Rate Limit (429) reached. Pausing {wait_time:.0f}s before retry ({attempt}/{max_retries})...")
+            except RateLimitError as e:
+                err_msg = str(e).lower()
+                retry_header = None
+                if hasattr(e, "response") and e.response is not None:
+                    retry_header = e.response.headers.get("retry-after")
+
+                wait_time = float(retry_header) + 1.5 if (retry_header and retry_header.isdigit()) else (15.0 * attempt)
+
+                # Detect if Daily Quota (200K TPD / 1K RPD) is exhausted instead of per-minute TPM
+                if "tokens per day" in err_msg or "tpd" in err_msg or "requests per day" in err_msg or wait_time > 120:
+                    logger.error(
+                        f"DAILY QUOTA EXHAUSTED for {self.model_name} (200K TPD limit reached). "
+                        f"Stopping batch and saving graded students. Switch to another model to continue."
+                    )
+                    if stop_event:
+                        stop_event.set()
+                    return None
+
+                logger.warning(f"Groq TPM Rate Limit (429). Waiting {wait_time:.1f}s (from retry-after) before retry ({attempt}/{max_retries})...")
                 if not self._interruptible_sleep(wait_time, stop_event):
                     return None
 
@@ -162,15 +177,13 @@ class AIGrader:
 
         raise RuntimeError("Exceeded maximum Groq API retries.")
 
-    def evaluate(self, code_text, objective_flags, rubric_text, rubric_categories, stop_event=None):
+    def evaluate(self, user_prompt, objective_flags, rubric_text, rubric_categories, stop_event=None):
         score_template = {cat: 0 for cat in rubric_categories}
 
+        # 100% static system prompt across all students in the batch (enables Groq Prompt Caching)
         system_prompt = f"""You are a strict, critical React Native code grader.
 Grade the student code strictly using this rubric:
 {rubric_text}
-
-Verified Syntax Flags (True = present in student code, False = missing):
-{json.dumps(objective_flags)}
 
 STRICT SCORING TIERS (Do NOT give 100% unless code is flawless):
 - INCOMPLETE (0% to 40% of category max): Required syntax flag for that category is False, or feature is missing/broken.
@@ -186,11 +199,18 @@ Instructions:
 
 {json.dumps({"scores": score_template, "feedback": "Specific reason for deductions or praise in under 20 words."}, indent=4)}"""
 
+        # Dynamic per-student flags + code placed in user_prompt
+        user_prompt = (
+            f"Verified Syntax Flags (True = present in student code, False = missing):\n"
+            f"{json.dumps(objective_flags)}\n\n"
+            f"Student Source Code:\n\n{user_prompt}"
+        )
+
         try:
             if self.provider == "Online (Groq)":
-                raw_content = self._call_groq(system_prompt, code_text, stop_event)
+                raw_content = self._call_groq(system_prompt, user_prompt, stop_event)
             else:
-                raw_content = self._call_ollama(system_prompt, code_text, stop_event)
+                raw_content = self._call_ollama(system_prompt, user_prompt, stop_event)
 
             if raw_content is None:
                 return None
