@@ -53,7 +53,7 @@ class AIGrader:
             time.sleep(0.25)
         return True
 
-    def _call_ollama(self, system_prompt: str, code_text: str, stop_event) -> str | None:
+    def _call_ollama(self, system_prompt: str, user_prompt: str, stop_event) -> str | None:
         """Streams inference from local Ollama instance."""
         logger.debug(f"Sending prompt to Local Ollama model: {self.model_name}...")
         stream = ollama.chat(
