@@ -4,7 +4,7 @@ import re
 import time
 import logging
 import ollama
-from groq import Groq, RateLimitError, APIStatusError
+from groq import Groq, RateLimitError, BadRequestError, APIStatusError
 
 logger = logging.getLogger("AutoGrader")
 
@@ -82,26 +82,39 @@ class AIGrader:
         return raw_content
 
     def _call_groq(self, system_prompt: str, code_text: str, stop_event) -> str | None:
-        """Calls Groq Cloud API with automatic HTTP 429 rate-limit backoff and stream cancellation."""
+        """Calls Groq Cloud API with reasoning_effort control, 400 JSON fallback, and 429 backoff."""
         client = Groq(api_key=self.api_key)
         max_retries = 4
+        use_json_mode = True
+
+        # Configure model-specific reasoning effort so Chain-of-Thought never starves JSON output
+        extra_kwargs = {}
+        model_lower = self.model_name.lower()
+        if "gpt-oss" in model_lower:
+            extra_kwargs["reasoning_effort"] = "low"
+        elif "qwen" in model_lower:
+            extra_kwargs["reasoning_effort"] = "none"
 
         for attempt in range(1, max_retries + 1):
             if stop_event and stop_event.is_set():
                 return None
             try:
                 logger.debug(f"Sending prompt to Groq Cloud model: {self.model_name} (Attempt {attempt})...")
-                stream = client.chat.completions.create(
-                    model=self.model_name,
-                    messages=[
+                req_kwargs = {
+                    "model": self.model_name,
+                    "messages": [
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": f"Student Source Code:\n\n{code_text}"}
                     ],
-                    temperature=0.1,
-                    max_completion_tokens=600,
-                    response_format={"type": "json_object"},
-                    stream=True
-                )
+                    "temperature": 0.1,
+                    "max_completion_tokens": 2048,
+                    "stream": True,
+                    **extra_kwargs
+                }
+                if use_json_mode:
+                    req_kwargs["response_format"] = {"type": "json_object"}
+
+                stream = client.chat.completions.create(**req_kwargs)
 
                 raw_content = ""
                 for chunk in stream:
@@ -113,15 +126,27 @@ class AIGrader:
                     if delta:
                         raw_content += delta
 
-                # Brief 2.2s pacing delay after success to respect Groq Free Tier RPM/TPM limits
                 self._interruptible_sleep(2.2, stop_event)
                 return raw_content
 
-            except RateLimitError as e:
+            except BadRequestError as e:
+                # Handle Groq HTTP 400 'json_validate_failed' on gpt-oss models
+                err_body = getattr(e, "body", {}) or {}
+                failed_gen = err_body.get("error", {}).get("failed_generation", "")
+                if failed_gen and "{" in failed_gen:
+                    logger.warning(f"Recovered partial JSON from Groq failed_generation on Attempt {attempt}.")
+                    return failed_gen
+                logger.warning(f"Groq JSON mode validation failed on Attempt {attempt}. Retrying in text-extraction mode...")
+                use_json_mode = False
+                if not self._interruptible_sleep(1.5, stop_event):
+                    return None
+
+            except RateLimitError:
                 wait_time = 12.0 * attempt
                 logger.warning(f"Groq Rate Limit (429) reached. Pausing {wait_time:.0f}s before retry ({attempt}/{max_retries})...")
                 if not self._interruptible_sleep(wait_time, stop_event):
                     return None
+
             except APIStatusError as e:
                 if e.status_code in (401, 403, 404):
                     logger.error(f"FATAL Groq Error ({e.status_code}): {e.message}. Stopping batch.")
@@ -135,7 +160,7 @@ class AIGrader:
                 else:
                     raise e
 
-        raise RuntimeError("Exceeded maximum Groq API rate-limit retries.")
+        raise RuntimeError("Exceeded maximum Groq API retries.")
 
     def evaluate(self, code_text, objective_flags, rubric_text, rubric_categories, stop_event=None):
         score_template = {cat: 0 for cat in rubric_categories}
@@ -154,9 +179,9 @@ STRICT SCORING TIERS (Do NOT give 100% unless code is flawless):
 
 Instructions:
 1. Deduct points critically for genuine code flaws, inline styling, fixed pixel dimensions, or poor organization.
-2. IMPORTANT: Files ending with "[File truncated...]" or "[NOTE: Source code truncated for length]" were cut off by the parser to save memory. Do NOT deduct points or penalize the student for missing closing tags, unclosed brackets, or incomplete components at the end of truncated files.
+2. IMPORTANT: Markers like "[Middle of file omitted for memory]" indicate parser memory limits. Never deduct points for omitted lines, and trust Verified Syntax Flags (e.g., if "has_stylesheet": true, StyleSheet is present).
 3. Only mention tools/components that actually appear in the Student Source Code.
-4. Keep "feedback" to a HARD MAXIMUM of 20 words. State specific code flaws or strengths directly.
+4. You MUST output BOTH the "scores" object AND a non-empty "feedback" string (HARD MAXIMUM of 20 words). Never omit the "feedback" key.
 5. Output ONLY valid JSON matching the exact keys below:
 
 {json.dumps({"scores": score_template, "feedback": "Specific reason for deductions or praise in under 20 words."}, indent=4)}"""

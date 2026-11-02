@@ -51,7 +51,7 @@ class ReactNativeParser:
             except Exception as e:
                 logger.warning(f"Could not read {rel_path}: {e}")
 
-        # Build AI prompt payload: ensure every file gets represented if total > 8,000 chars
+       # Build AI prompt payload: preserve top 65% (JSX) and bottom 35% (StyleSheet) when truncating
         max_total_chars = 8000
         if len(self.full_code) <= max_total_chars:
             self.raw_code = self.full_code
@@ -62,10 +62,17 @@ class ReactNativeParser:
             for rel_path, content in file_contents:
                 header = f"\n// --- File: {rel_path} ---\n"
                 if len(content) > per_file_budget:
-                    chunks.append(header + content[:per_file_budget] + "\n// [File truncated...]")
+                    head_chars = int(per_file_budget * 0.65)
+                    tail_chars = per_file_budget - head_chars
+                    snippet = (
+                        content[:head_chars]
+                        + "\n// ... [Middle of file omitted for memory] ...\n"
+                        + content[-tail_chars:]
+                    )
+                    chunks.append(header + snippet)
                 else:
                     chunks.append(header + content)
-            self.raw_code = "".join(chunks)[:max_total_chars] + "\n\n// [NOTE: Source code truncated for length]"
+            self.raw_code = "".join(chunks)[:max_total_chars]
 
     def _strip_comments(self, text: str) -> str:
         """Removes /* ... */ block comments and // single-line comments without breaking URLs."""

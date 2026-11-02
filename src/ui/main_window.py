@@ -71,7 +71,7 @@ class AutoGraderWindow(ctk.CTk):
 
        # 5. AI Provider & Model Selection Row
         self.local_models = ["qwen2.5-coder:7b", "llama3.2:3b", "qwen2.5-coder:3b"]
-        self.online_models = ["openai/gpt-oss-120b", "openai/gpt-oss-20b", "qwen/qwen3.8-27b"]
+        self.online_models = ["qwen/qwen3.8-27b", "openai/gpt-oss-120b", "openai/gpt-oss-20b"]
 
         self.provider_var = ctk.StringVar(value="Local (Ollama)")
         self.dropdown_provider = ctk.CTkOptionMenu(
