@@ -1,5 +1,6 @@
 import logging
 from datetime import datetime
+import re
 import threading
 import time
 from src.engine.folder_matcher import StudentFolderMatcher
@@ -68,21 +69,48 @@ class AutoGraderWindow(ctk.CTk):
         self.btn_output = ctk.CTkButton(self.frame, text="Browse Output...", command=self.load_output_folder)
         self.btn_output.grid(row=3, column=1, padx=10, pady=10, sticky="e")
 
-        # 5. Output Filename & Model Selection Row
-        self.filename_var = ctk.StringVar(value="Graded_Report")
-        self.entry_filename = ctk.CTkEntry(self.frame, textvariable=self.filename_var, width=150)
-        self.entry_filename.grid(row=4, column=0, padx=10, pady=10, sticky="w")
-        
-        self.model_var = ctk.StringVar(value="qwen2.5-coder:7b")
+       # 5. AI Provider & Model Selection Row
+        self.local_models = ["qwen2.5-coder:7b", "llama3.2:3b", "qwen2.5-coder:3b"]
+        self.online_models = ["openai/gpt-oss-120b", "openai/gpt-oss-20b", "qwen/qwen3.8-27b"]
+
+        self.provider_var = ctk.StringVar(value="Local (Ollama)")
+        self.dropdown_provider = ctk.CTkOptionMenu(
+            self.frame,
+            variable=self.provider_var,
+            values=["Local (Ollama)", "Online (Groq)"],
+            command=self.on_provider_change,
+            width=160
+        )
+        self.dropdown_provider.grid(row=4, column=0, padx=10, pady=10, sticky="w")
+
+        self.model_var = ctk.StringVar(value=self.local_models[0])
         self.dropdown_model = ctk.CTkOptionMenu(
             self.frame,
             variable=self.model_var,
-            values=["qwen2.5-coder:7b", "llama3.2:3b", "qwen2.5-coder:3b"]
+            values=self.local_models,
+            width=210
         )
         self.dropdown_model.grid(row=4, column=1, padx=10, pady=10, sticky="e")
 
+        # 6. Output Filename & Groq API Key Row
+        self.filename_var = ctk.StringVar(value="Graded_Report")
+        self.entry_filename = ctk.CTkEntry(self.frame, textvariable=self.filename_var, width=160, placeholder_text="Output Filename")
+        self.entry_filename.grid(row=5, column=0, padx=10, pady=10, sticky="w")
+
+        self.api_key_var = ctk.StringVar(value=os.environ.get("GROQ_API_KEY", ""))
+        self.api_key_var.trace_add("write", lambda *args: self.check_ready_state())
+        self.entry_api_key = ctk.CTkEntry(
+            self.frame,
+            textvariable=self.api_key_var,
+            width=210,
+            placeholder_text="Groq API Key (gsk_...)",
+            show="*"
+        )
+        self.entry_api_key.grid(row=5, column=1, padx=10, pady=10, sticky="e")
+        self.entry_api_key.configure(state="disabled")
+
         self.lbl_student_count = ctk.CTkLabel(self.frame, text="Students loaded: 0", font=ctk.CTkFont(weight="bold"))
-        self.lbl_student_count.grid(row=5, column=0, columnspan=2, padx=10, pady=(0, 10), sticky="w")
+        self.lbl_student_count.grid(row=6, column=0, columnspan=2, padx=10, pady=(0, 10), sticky="w")
 
         self.stop_event = threading.Event()
 
@@ -170,8 +198,28 @@ class AutoGraderWindow(ctk.CTk):
             self.lbl_output.configure(text=f"Save Report To: .../{os.path.basename(folderpath)}")
             self.check_ready_state()
 
+    def on_provider_change(self, selected_provider: str):
+        """Swaps the model list and enables/disables the API Key box based on provider."""
+        if selected_provider == "Online (Groq)":
+            self.dropdown_model.configure(values=self.online_models)
+            self.model_var.set(self.online_models[0])
+            self.entry_api_key.configure(state="normal")
+        else:
+            self.dropdown_model.configure(values=self.local_models)
+            self.model_var.set(self.local_models[0])
+            self.entry_api_key.configure(state="disabled")
+        self.check_ready_state()
+
     def check_ready_state(self):
-        if all([self.students_df is not None, self.submissions_path, self.rubric_path, self.output_path]):
+        files_ready = all([self.students_df is not None, self.submissions_path, self.rubric_path, self.output_path])
+        if not files_ready:
+            self.btn_start.configure(state="disabled")
+            return
+
+        if self.provider_var.get() == "Online (Groq)" and not self.api_key_var.get().strip():
+            self.btn_start.configure(state="disabled")
+            self.status_label.configure(text="Please enter your Groq API Key (gsk_...) to use Online mode.")
+        else:
             self.btn_start.configure(state="normal")
             self.status_label.configure(text="Ready to begin grading.")
 
@@ -181,23 +229,24 @@ class AutoGraderWindow(ctk.CTk):
             self.status_label.configure(text="Please select an output folder before starting.")
             return
 
-        # Lock active model and filename so UI changes mid-run cannot corrupt the batch
+        # Lock active settings so UI changes mid-run cannot corrupt the batch
+        self.active_provider = self.provider_var.get()
         self.active_model = self.model_var.get()
         self.active_filename = self.filename_var.get()
+        self.active_api_key = self.api_key_var.get().strip()
 
         self.stop_event.clear()
         self.btn_start.configure(state="disabled")
         self.btn_stop.configure(state="normal")
-        self.entry_filename.configure(state="disabled")
-        self.dropdown_model.configure(state="disabled")
+        self._set_inputs_state("disabled")
         self.progress.set(0)
         self.terminal.configure(state="normal")
-        self.terminal.delete("1.0", "end") # Clear terminal on new run
+        self.terminal.delete("1.0", "end")
         self.terminal.configure(state="disabled")
         
         # Setup File Handler (Write everything to .log file)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        model_safe_name = self.active_model.replace(':', '_')
+        model_safe_name = re.sub(r'[<>:"/\\|?*]', '_', self.active_model)
         log_file = os.path.join(output_path, f"Diagnostic_Report_{timestamp}_{model_safe_name}.log")
         
         self.file_handler = logging.FileHandler(log_file, encoding='utf-8')
@@ -205,16 +254,21 @@ class AutoGraderWindow(ctk.CTk):
         self.file_handler.setFormatter(logging.Formatter('[%(asctime)s] [%(levelname)s] [%(module)s] %(message)s'))
         self.logger.addHandler(self.file_handler)
         
-        self.logger.info(f"--- STARTED NEW GRADING BATCH (Model: {self.active_model}) ---")
+        self.logger.info(f"--- STARTED NEW GRADING BATCH ({self.active_provider} | {self.active_model}) ---")
         self.logger.debug(f"Target Output Directory: {self.output_path}")
 
         threading.Thread(target=self._run_grading_batch, daemon=True).start()
 
     def _set_inputs_state(self, state: str):
-        """Thread-safe helper to enable/disable the filename entry and model dropdown."""
+        """Thread-safe helper to enable/disable configuration inputs during a batch."""
         def update():
             self.entry_filename.configure(state=state)
             self.dropdown_model.configure(state=state)
+            self.dropdown_provider.configure(state=state)
+            if state == "normal" and self.provider_var.get() == "Online (Groq)":
+                self.entry_api_key.configure(state="normal")
+            else:
+                self.entry_api_key.configure(state="disabled")
         self.after(0, update)
 
     def stop_grading(self):
@@ -271,7 +325,11 @@ class AutoGraderWindow(ctk.CTk):
                     
                     if parser.file_count > 0:
                         self.logger.info(f"Extracted {folder_file_ratio} (Folders/Files). Running AI Evaluation...")
-                        grader = AIGrader(model_name=self.active_model)
+                        grader = AIGrader(
+                            model_name=self.active_model,
+                            provider=self.active_provider,
+                            api_key=self.active_api_key
+                        )
                         ai_result = grader.evaluate(
                             parser.raw_code,
                             parser.check_objective_rubric(self.rubric_text),
@@ -335,7 +393,11 @@ class AutoGraderWindow(ctk.CTk):
         finally:
             # THIS ALWAYS RUNS: Unload the exact locked model from RAM/VRAM and release resources
             try:
-                AIGrader(model_name=self.active_model).unload_model()
+                AIGrader(
+                    model_name=self.active_model,
+                    provider=self.active_provider,
+                    api_key=self.active_api_key
+                ).unload_model()
             except Exception:
                 pass
 
